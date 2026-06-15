@@ -341,3 +341,114 @@ class TestMoveCopy:
 
         assert result.is_directory is True
         assert result.name == "Photos"
+
+
+class TestUploadStreaming:
+    def test_streaming_small_file_single_chunk(self, tmp_path, file_dict: dict) -> None:
+        f = tmp_path / "small.bin"
+        f.write_bytes(b"abc")
+        file_dict = file_dict | {"id": 300, "name": "small.bin"}
+        session = Mock(spec=requests.Session)
+        # start → chunk → finish
+        session.request.side_effect = [
+            make_response(200, {"data": {"session_token": "tok-1"}}),
+            make_response(200, {}),
+            make_response(200, {"data": file_dict}),
+        ]
+        client = make_client(session)
+
+        result = client.upload_file_streaming(
+            drive_id=1, directory_id=2, file_name="small.bin", file_path=f
+        )
+
+        assert result.id == 300
+        # Three POSTs total: start, chunk, finish
+        assert session.request.call_count == 3
+        # Start body declares total_size=3, total_chunks=1
+        start_body = session.request.call_args_list[0].kwargs["json"]
+        assert start_body["total_size"] == 3
+        assert start_body["total_chunks"] == 1
+        assert start_body["directory_id"] == 2
+        # Chunk call: raw bytes, chunk_number=1, chunk_size=3
+        chunk_call = session.request.call_args_list[1]
+        assert chunk_call.kwargs["data"] == b"abc"
+        assert chunk_call.kwargs["params"] == {"chunk_number": 1, "chunk_size": 3}
+        # Finish call: no body data
+        finish_call = session.request.call_args_list[2]
+        assert finish_call.kwargs["data"] is None
+
+    def test_streaming_multi_chunk(self, tmp_path, file_dict: dict) -> None:
+        f = tmp_path / "big.bin"
+        # 20 bytes — 3 chunks of 8
+        f.write_bytes(b"x" * 20)
+        file_dict = file_dict | {"id": 301, "name": "big.bin"}
+        session = Mock(spec=requests.Session)
+        # start → 3 chunks → finish
+        session.request.side_effect = [
+            make_response(200, {"data": {"session_token": "tok-2"}}),
+            make_response(200, {}),
+            make_response(200, {}),
+            make_response(200, {}),
+            make_response(200, {"data": file_dict}),
+        ]
+        client = make_client(session)
+
+        progress_calls: list[tuple[int, int]] = []
+        client.upload_file_streaming(
+            drive_id=1,
+            directory_id=2,
+            file_name="big.bin",
+            file_path=f,
+            chunk_size=8,
+            on_progress=lambda sent, total: progress_calls.append((sent, total)),
+        )
+
+        # 3 chunk POSTs in order, with chunk_number 1/2/3
+        chunk_calls = session.request.call_args_list[1:4]
+        assert [c.kwargs["params"]["chunk_number"] for c in chunk_calls] == [1, 2, 3]
+        # Last chunk is 4 bytes (20 - 8 - 8)
+        assert chunk_calls[-1].kwargs["params"]["chunk_size"] == 4
+        # Progress fires once per chunk, cumulative bytes
+        assert progress_calls == [(8, 20), (16, 20), (20, 20)]
+
+    def test_streaming_zero_byte_file(self, tmp_path, file_dict: dict) -> None:
+        f = tmp_path / "empty.bin"
+        f.write_bytes(b"")
+        file_dict = file_dict | {"id": 302, "name": "empty.bin", "size": 0}
+        session = Mock(spec=requests.Session)
+        # start → finish (no chunks for 0-byte)
+        session.request.side_effect = [
+            make_response(200, {"data": {"session_token": "tok-3"}}),
+            make_response(200, {"data": file_dict}),
+        ]
+        client = make_client(session)
+
+        result = client.upload_file_streaming(
+            drive_id=1, directory_id=2, file_name="empty.bin", file_path=f
+        )
+
+        assert result.id == 302
+        assert session.request.call_count == 2
+        # Start declared total_chunks=0
+        start_body = session.request.call_args_list[0].kwargs["json"]
+        assert start_body["total_chunks"] == 0
+        assert start_body["total_size"] == 0
+
+    def test_streaming_no_progress_callback(self, tmp_path, file_dict: dict) -> None:
+        # Sanity check: on_progress=None is the default and must not break the flow.
+        f = tmp_path / "ok.bin"
+        f.write_bytes(b"y" * 10)
+        file_dict = file_dict | {"id": 303, "name": "ok.bin"}
+        session = Mock(spec=requests.Session)
+        session.request.side_effect = [
+            make_response(200, {"data": {"session_token": "tok-4"}}),
+            make_response(200, {}),
+            make_response(200, {"data": file_dict}),
+        ]
+        client = make_client(session)
+
+        result = client.upload_file_streaming(
+            drive_id=1, directory_id=2, file_name="ok.bin", file_path=f
+        )
+
+        assert result.id == 303

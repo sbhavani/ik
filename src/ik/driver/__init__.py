@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from typing import TextIO
 
 from .. import File, KDriveClient, KDriveError
+
+
+CHUNKED_THRESHOLD = 16 * 1024 * 1024  # 16 MB
 
 
 def _format_size(size: int) -> str:
@@ -27,6 +31,35 @@ def _print_file_entry(f: File, show_id: bool = False) -> None:
         print(f"  {marker} {f.id:>10}  {size_str:>8}  {name}")
     else:
         print(f"  {marker} {size_str:>8}  {name}")
+
+
+def _make_progress(
+    label: str,
+    total: int,
+    stream: TextIO,
+    enabled: bool,
+) -> Callable[[int, int], None]:
+    """Return a (sent, total) → None callback that renders a TTY progress bar.
+
+    When `enabled` is False or `total <= 0`, returns a no-op so callers
+    don't need to branch. When enabled, overwrites the same line via '\\r'
+    on `stream` and flushes after each render.
+    """
+    if not enabled or total <= 0:
+        return lambda sent, total: None
+
+    width = 30
+
+    def render(sent: int, total: int) -> None:
+        pct = sent / total * 100
+        filled = int(width * sent / total)
+        bar = "#" * filled + "-" * (width - filled)
+        stream.write(
+            f"\r{label}: [{bar}] {pct:5.1f}% ({sent / 1024 / 1024:.1f}/{total / 1024 / 1024:.1f} MB)"
+        )
+        stream.flush()
+
+    return render
 
 
 # ── Command Implementations ──────────────────────────────────────────
@@ -98,10 +131,20 @@ def cmd_upload(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys
     if not local_path.exists():
         raise KDriveError(f"File not found: {local_path}")
 
-    file_data = local_path.read_bytes()
-    out.write(f"Uploading {local_path.name} ({len(file_data) / 1024:.1f}KB)...\n")
+    total = local_path.stat().st_size
+    progress = _make_progress(local_path.name, total, sys.stderr, sys.stderr.isatty())
 
-    result = client.upload_file(drive_id, directory_id, local_path.name, file_data)
+    if total < CHUNKED_THRESHOLD:
+        data = local_path.read_bytes()
+        out.write(f"Uploading {local_path.name} ({total / 1024:.1f}KB)...\n")
+        result = client.upload_file(drive_id, directory_id, local_path.name, data)
+    else:
+        out.write(f"Uploading {local_path.name} ({total / 1024 / 1024:.1f}MB) — chunked...\n")
+        result = client.upload_file_streaming(
+            drive_id, directory_id, local_path.name, local_path, on_progress=progress
+        )
+        sys.stderr.write("\n")
+
     out.write(f"Uploaded: {result.name} (id: {result.id})\n")
 
 
@@ -119,9 +162,17 @@ def cmd_download(args: argparse.Namespace, client: KDriveClient, out: TextIO = s
 
     out.write(f"Downloading {info.name}...\n")
     resp = client.download_file(drive_id, file_id)
+    total = int(resp.headers.get("Content-Length", 0)) if resp.headers else 0
+    progress = _make_progress(info.name, total, sys.stderr, sys.stderr.isatty())
+    received = 0
     with open(local_path, "wb") as f:
         for chunk in resp.iter_content(chunk_size=8192):
-            f.write(chunk)
+            if chunk:
+                f.write(chunk)
+                received += len(chunk)
+                progress(received, total)
+    if total > 0:
+        sys.stderr.write("\n")
 
     out.write(f"Saved: {local_path} ({local_path.stat().st_size / 1024:.1f}KB)\n")
 

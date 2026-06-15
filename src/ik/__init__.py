@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Iterator
+from pathlib import Path
+from typing import Any, Callable, Iterator
 
 import requests
 
@@ -224,6 +225,65 @@ class KDriveClient:
     def download_file(self, drive_id: int, file_id: int) -> requests.Response:
         """Download a file (returns streaming response)."""
         return self._request("GET", f"/2/drive/{drive_id}/files/{file_id}/download", stream=True)
+
+    def upload_file_streaming(
+        self,
+        drive_id: int,
+        directory_id: int,
+        file_name: str,
+        file_path: Path,
+        chunk_size: int = 8 * 1024 * 1024,
+        conflict: str = "error",
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> File:
+        """Upload a file via the chunked session flow, streaming from disk.
+
+        Three calls: start → (chunk × ceil(total/chunk_size)) → finish.
+        The file is read in fixed-size chunks; the whole file is never
+        held in memory. The on_progress callback is invoked after each
+        chunk with (bytes_sent, total_size); pass None to skip.
+        """
+        total_size = file_path.stat().st_size
+        if total_size == 0:
+            total_chunks = 0
+        else:
+            total_chunks = (total_size + chunk_size - 1) // chunk_size
+
+        start = self._request(
+            "POST",
+            f"/3/drive/{drive_id}/upload/session/start",
+            json_body={
+                "directory_id": directory_id,
+                "file_name": file_name,
+                "total_size": total_size,
+                "total_chunks": total_chunks,
+                "conflict": conflict,
+            },
+        )
+        session_token = start["data"]["session_token"]
+
+        sent = 0
+        with open(file_path, "rb") as f:
+            for chunk_number in range(1, total_chunks + 1):
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                self._request(
+                    "POST",
+                    f"/3/drive/{drive_id}/upload/session/{session_token}/chunk",
+                    params={"chunk_number": chunk_number, "chunk_size": len(chunk)},
+                    data=chunk,
+                )
+                sent += len(chunk)
+                if on_progress is not None:
+                    on_progress(sent, total_size)
+
+        finish = self._request(
+            "POST",
+            f"/3/drive/{drive_id}/upload/session/{session_token}/finish",
+            json_body={},
+        )
+        return File.from_api(finish.get("data", {}))
 
     def search(self, drive_id: int, query: str) -> Iterator[File]:
         """Search for files by name."""

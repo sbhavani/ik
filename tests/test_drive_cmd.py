@@ -13,6 +13,7 @@ import pytest
 from ik import Drive, File, KDriveClient, KDriveError
 from ik.driver import (
     _get_default_drive,
+    _make_progress,
     _resolve_directory,
     _resolve_source_id,
     cmd_cp,
@@ -251,6 +252,7 @@ class TestCmdDownload:
         client = Mock(spec=KDriveClient)
         client.get_file.return_value = make_file(id=100, name="report.pdf")
         resp = Mock()
+        resp.headers = {"Content-Length": "6"}
         resp.iter_content.return_value = iter([b"abc", b"def"])
         client.download_file.return_value = resp
         out = io.StringIO()
@@ -267,6 +269,7 @@ class TestCmdDownload:
         client = Mock(spec=KDriveClient)
         client.get_file.return_value = make_file(id=100, name="data.bin")
         resp = Mock()
+        resp.headers = {}
         resp.iter_content.return_value = iter([b"x"])
         client.download_file.return_value = resp
 
@@ -552,3 +555,86 @@ class TestCmdCp:
 
         assert client.copy_file.call_args.kwargs["name"] == "renamed.pdf"
         assert out.getvalue() == "Copied: renamed.pdf (id: 202)\n"
+
+
+# ── Threshold branching in cmd_upload ────────────────────────────────
+
+
+class TestCmdUploadThreshold:
+    def test_uses_oneshot_below_threshold(self, tmp_path) -> None:
+        local = tmp_path / "small.bin"
+        local.write_bytes(b"x" * 1024)  # 1 KB
+        client = Mock(spec=KDriveClient)
+        client.upload_file.return_value = make_file(id=1, name="small.bin")
+
+        cmd_upload(ns(drive=1, local=str(local), dir=1), client, out=io.StringIO())
+
+        client.upload_file.assert_called_once()
+        client.upload_file_streaming.assert_not_called()
+
+    def test_uses_chunked_above_threshold(self, tmp_path) -> None:
+        from ik.driver import CHUNKED_THRESHOLD
+
+        local = tmp_path / "big.bin"
+        # One byte over the threshold — exercises the boundary cleanly.
+        local.write_bytes(b"x" * (CHUNKED_THRESHOLD + 1))
+        client = Mock(spec=KDriveClient)
+        client.upload_file_streaming.return_value = make_file(id=2, name="big.bin")
+
+        cmd_upload(ns(drive=1, local=str(local), dir=1), client, out=io.StringIO())
+
+        client.upload_file_streaming.assert_called_once()
+        client.upload_file.assert_not_called()
+        # The streaming call must reference the actual file path
+        # (4th positional arg in upload_file_streaming)
+        assert client.upload_file_streaming.call_args.args[3] == local
+
+
+# ── _make_progress ───────────────────────────────────────────────────
+
+
+class TestMakeProgress:
+    def test_disabled_returns_noop(self) -> None:
+        stream = io.StringIO()
+        cb = _make_progress("file.bin", 1000, stream, enabled=False)
+
+        cb(500, 1000)
+        cb(1000, 1000)
+
+        assert stream.getvalue() == ""
+
+    def test_unknown_total_returns_noop(self) -> None:
+        stream = io.StringIO()
+        cb = _make_progress("file.bin", 0, stream, enabled=True)
+
+        cb(500, 0)
+        cb(1000, 0)
+
+        # No bar when total is unknown (e.g. download without Content-Length)
+        assert stream.getvalue() == ""
+
+    def test_renders_bar_when_enabled(self) -> None:
+        stream = io.StringIO()
+        cb = _make_progress("data.bin", 1000, stream, enabled=True)
+
+        cb(500, 1000)
+        out = stream.getvalue()
+
+        # Bar uses '#' and '-' characters on a 30-char wide line
+        assert "\rdata.bin:" in out
+        assert "#" in out
+        assert "-" in out
+        assert "50.0%" in out
+        # MB-scaled bytes appear in the suffix
+        assert "MB" in out
+
+    def test_full_progress_fully_fills_bar(self) -> None:
+        stream = io.StringIO()
+        cb = _make_progress("x.bin", 100, stream, enabled=True)
+
+        cb(100, 100)
+        out = stream.getvalue()
+
+        # 100% — bar should be 30 '#' chars, no '-' remaining
+        assert "[" + "#" * 30 + "]" in out
+        assert "100.0%" in out
