@@ -1,2 +1,0 @@
-[console_scripts]
-ik = ik.cli:main
