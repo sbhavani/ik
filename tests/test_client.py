@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 import requests
 
-from ik import KDriveClient, KDriveError, MoveOperation
+from ik import KDriveClient, KDriveError, MoveOperation, ShareLink
 from tests.conftest import make_response
 
 
@@ -452,3 +452,208 @@ class TestUploadStreaming:
         )
 
         assert result.id == 303
+
+
+class TestShareLinks:
+    def test_create_share_link_defaults(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            201,
+            {
+                "data": {
+                    "url": "https://kdrive.infomaniak.com/app/share/abc",
+                    "file_id": 100,
+                    "right": "public",
+                    "capabilities": {"can_download": True},
+                }
+            },
+        )
+        client = make_client(session)
+
+        link = client.create_share_link(drive_id=1, file_id=100)
+
+        assert isinstance(link, ShareLink)
+        assert link.url == "https://kdrive.infomaniak.com/app/share/abc"
+        assert link.file_id == 100
+        # Default body: right=public, can_download=True, all others False
+        body = session.request.call_args.kwargs["json"]
+        assert body["right"] == "public"
+        assert body["can_download"] is True
+        assert body["can_edit"] is False
+        # POST to /files/{id}/link
+        assert session.request.call_args.args[0] == "POST"
+        assert "/files/100/link" in session.request.call_args.args[1]
+
+    def test_create_share_link_with_password_and_validity(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            201, {"data": {"url": "https://x", "file_id": 100, "right": "password"}}
+        )
+        client = make_client(session)
+
+        client.create_share_link(
+            drive_id=1,
+            file_id=100,
+            right="password",
+            password="hunter2",
+            valid_until=1_700_000_000,
+        )
+
+        body = session.request.call_args.kwargs["json"]
+        assert body["right"] == "password"
+        assert body["password"] == "hunter2"
+        assert body["valid_until"] == 1_700_000_000
+
+    def test_get_share_link(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200,
+            {
+                "data": {
+                    "url": "https://kdrive.example/s/xyz",
+                    "file_id": 100,
+                    "right": "public",
+                    "valid_until": 1_700_000_000,
+                    "capabilities": {
+                        "can_download": True,
+                        "can_edit": False,
+                        "can_see_info": True,
+                    },
+                    "access_blocked": False,
+                    "created_at": 1_600_000_000,
+                    "updated_at": 1_650_000_000,
+                    "created_by": 42,
+                    "views": 7,
+                }
+            },
+        )
+        client = make_client(session)
+
+        link = client.get_share_link(drive_id=1, file_id=100)
+
+        assert session.request.call_args.args[0] == "GET"
+        assert link.url == "https://kdrive.example/s/xyz"
+        assert link.right == "public"
+        assert link.can_download is True
+        assert link.can_see_info is True
+        assert link.can_edit is False
+        assert link.created_by == 42
+        assert link.views == 7
+        # Unix timestamps converted to datetimes
+        assert link.valid_until is not None
+        assert link.valid_until.timestamp() == 1_700_000_000
+
+    def test_update_share_link_only_sends_changed_fields(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200, {"data": {"url": "https://x", "file_id": 100, "right": "public"}}
+        )
+        client = make_client(session)
+
+        client.update_share_link(drive_id=1, file_id=100, can_edit=True)
+
+        # PUT to the link endpoint
+        assert session.request.call_args.args[0] == "PUT"
+        body = session.request.call_args.kwargs["json"]
+        # Only the changed field is sent
+        assert body == {"can_edit": True}
+
+    def test_update_share_link_valid_until_cleared(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200, {"data": {"url": "https://x", "file_id": 100, "right": "public"}}
+        )
+        client = make_client(session)
+
+        # valid_until=None means "clear the existing expiry"
+        client.update_share_link(drive_id=1, file_id=100, valid_until=None)
+
+        body = session.request.call_args.kwargs["json"]
+        assert body == {"valid_until": None}
+
+    def test_update_share_link_valid_until_omitted(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200, {"data": {"url": "https://x", "file_id": 100, "right": "public"}}
+        )
+        client = make_client(session)
+
+        # Don't pass valid_until at all → must NOT appear in body
+        client.update_share_link(drive_id=1, file_id=100, can_edit=True)
+
+        body = session.request.call_args.kwargs["json"]
+        assert "valid_until" not in body
+
+    def test_delete_share_link(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(200, {})
+        client = make_client(session)
+
+        client.delete_share_link(drive_id=1, file_id=100)
+
+        # DELETE verb, no body, hits the link endpoint
+        assert session.request.call_args.args[0] == "DELETE"
+        assert "/files/100/link" in session.request.call_args.args[1]
+        assert session.request.call_args.kwargs.get("json") is None
+
+    def test_list_shared_files_single_page(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200,
+            {
+                "data": [
+                    {
+                        "id": 10,
+                        "name": "shared.pdf",
+                        "update_at": 1_700_000_000,
+                        "users": 3,
+                    },
+                    {
+                        "id": 11,
+                        "name": "photo.jpg",
+                        "update_at": 1_650_000_000,
+                        "users": 0,
+                    },
+                ],
+                "has_more": False,
+            },
+        )
+        client = make_client(session)
+
+        files = list(client.list_shared_files(drive_id=1))
+
+        assert [f.id for f in files] == [10, 11]
+        assert files[0].name == "shared.pdf"
+        assert files[0].users == 3
+        assert files[0].update_at is not None
+        # GET on the v3 list endpoint
+        assert session.request.call_args.args[0] == "GET"
+        assert "/3/drive/1/files/links" in session.request.call_args.args[1]
+
+    def test_list_shared_files_follows_cursor(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.side_effect = [
+            make_response(
+                200,
+                {
+                    "data": [{"id": 10, "name": "a", "update_at": 0, "users": 0}],
+                    "has_more": True,
+                    "cursor": "C1",
+                },
+            ),
+            make_response(
+                200,
+                {
+                    "data": [{"id": 11, "name": "b", "update_at": 0, "users": 0}],
+                    "has_more": False,
+                },
+            ),
+        ]
+        client = make_client(session)
+
+        files = list(client.list_shared_files(drive_id=1))
+
+        assert [f.id for f in files] == [10, 11]
+        assert session.request.call_count == 2
+        # Second call carries the cursor
+        assert session.request.call_args_list[1].kwargs["params"]["cursor"] == "C1"

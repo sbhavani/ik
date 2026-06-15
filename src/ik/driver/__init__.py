@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable
 from typing import TextIO
 
-from .. import File, KDriveClient, KDriveError
+from .. import File, KDriveClient, KDriveError, _UNSET
 
 
 CHUNKED_THRESHOLD = 16 * 1024 * 1024  # 16 MB
@@ -256,6 +256,101 @@ def cmd_cp(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.std
     out.write(f"Copied: {result.name} (id: {result.id})\n")
 
 
+def cmd_share_create(
+    args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout
+) -> None:
+    """Create a public share link for a file."""
+    drive_id = args.drive or _get_default_drive(client)
+    file_id = _resolve_source_id(client, drive_id, args.file)
+    link = client.create_share_link(
+        drive_id,
+        file_id,
+        right=args.right,
+        password=args.password,
+        valid_until=args.valid_until,
+        can_download=args.can_download,
+        can_edit=args.can_edit,
+        can_see_info=args.can_see_info,
+        can_comment=args.can_comment,
+        can_request_access=args.can_request_access,
+        can_see_stats=args.can_see_stats,
+    )
+    out.write(f"{link.url}\n")
+
+
+def cmd_share_get(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
+    """Show the share-link settings for a file (JSON)."""
+    import json
+
+    drive_id = args.drive or _get_default_drive(client)
+    file_id = _resolve_source_id(client, drive_id, args.file)
+    link = client.get_share_link(drive_id, file_id)
+    data = {
+        "url": link.url,
+        "file_id": link.file_id,
+        "right": link.right,
+        "valid_until": link.valid_until.isoformat() if link.valid_until else None,
+        "capabilities": {
+            "can_download": link.can_download,
+            "can_edit": link.can_edit,
+            "can_see_info": link.can_see_info,
+            "can_comment": link.can_comment,
+            "can_request_access": link.can_request_access,
+            "can_see_stats": link.can_see_stats,
+        },
+        "access_blocked": link.access_blocked,
+        "views": link.views,
+        "created_at": link.created_at.isoformat() if link.created_at else None,
+        "updated_at": link.updated_at.isoformat() if link.updated_at else None,
+        "created_by": link.created_by,
+    }
+    out.write(json.dumps(data, indent=2) + "\n")
+
+
+def cmd_share_update(
+    args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout
+) -> None:
+    """Partially update a share link. Only flags you pass are sent."""
+    drive_id = args.drive or _get_default_drive(client)
+    file_id = _resolve_source_id(client, drive_id, args.file)
+
+    changed = {
+        "right": args.right,
+        "password": args.password,
+        "valid_until": args.valid_until,
+        "can_download": args.can_download,
+        "can_edit": args.can_edit,
+        "can_see_info": args.can_see_info,
+        "can_comment": args.can_comment,
+        "can_request_access": args.can_request_access,
+        "can_see_stats": args.can_see_stats,
+    }
+    kwargs = {k: v for k, v in changed.items() if v is not _UNSET}
+    link = client.update_share_link(drive_id, file_id, **kwargs)
+    out.write(f"Updated: {link.url}\n")
+
+
+def cmd_share_remove(
+    args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout
+) -> None:
+    """Remove the share link from a file."""
+    drive_id = args.drive or _get_default_drive(client)
+    file_id = _resolve_source_id(client, drive_id, args.file)
+    client.delete_share_link(drive_id, file_id)
+    out.write(f"Removed share link for {args.file}\n")
+
+
+def cmd_share_ls(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
+    """List files that have a share link."""
+    drive_id = args.drive or _get_default_drive(client)
+    files = list(client.list_shared_files(drive_id))
+    if not files:
+        out.write("(no shared files)\n")
+        return
+    for sf in files:
+        out.write(f"  {sf.id:>10}  {sf.name}  (users: {sf.users})\n")
+
+
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
@@ -362,3 +457,69 @@ def add_drive_commands(parser: argparse.ArgumentParser) -> None:
     cp.add_argument("--name", help="New name for rename-and-copy")
     cp.add_argument("--drive", type=int, help="Drive ID")
     cp.set_defaults(func=cmd_cp)
+
+    # drive share
+    share = drive_sub.add_parser("share", help="Manage public share links")
+    share_sub = share.add_subparsers(dest="share_cmd", required=True)
+
+    # share create
+    share_create = share_sub.add_parser("create", help="Create a share link")
+    share_create.add_argument("file", help="File ID or path")
+    share_create.add_argument(
+        "--right", choices=["public", "password", "inherit"], default="public"
+    )
+    share_create.add_argument("--password", help="Password (when --right=password)")
+    share_create.add_argument("--valid-until", type=int, default=None)
+    for flag in (
+        "can-download",
+        "can-edit",
+        "can-see-info",
+        "can-comment",
+        "can-request-access",
+        "can-see-stats",
+    ):
+        dest = flag.replace("-", "_")
+        share_create.add_argument(f"--{flag}", dest=dest, action="store_true")
+        share_create.add_argument(f"--no-{flag}", dest=dest, action="store_false")
+        share_create.set_defaults(**{dest: False})
+    share_create.set_defaults(can_download=True)
+    share_create.add_argument("--drive", type=int, help="Drive ID")
+    share_create.set_defaults(func=cmd_share_create)
+
+    # share get
+    share_get = share_sub.add_parser("get", help="Get share-link settings")
+    share_get.add_argument("file", help="File ID or path")
+    share_get.add_argument("--drive", type=int, help="Drive ID")
+    share_get.set_defaults(func=cmd_share_get)
+
+    # share update
+    share_update = share_sub.add_parser("update", help="Update a share link")
+    share_update.add_argument("file", help="File ID or path")
+    share_update.add_argument("--right", choices=["public", "password", "inherit"], default=_UNSET)
+    share_update.add_argument("--password", default=_UNSET)
+    share_update.add_argument("--valid-until", type=int, default=_UNSET)
+    for flag in (
+        "can-download",
+        "can-edit",
+        "can-see-info",
+        "can-comment",
+        "can-request-access",
+        "can-see-stats",
+    ):
+        dest = flag.replace("-", "_")
+        share_update.add_argument(f"--{flag}", dest=dest, action="store_true")
+        share_update.add_argument(f"--no-{flag}", dest=dest, action="store_false")
+        share_update.set_defaults(**{dest: _UNSET})
+    share_update.add_argument("--drive", type=int, help="Drive ID")
+    share_update.set_defaults(func=cmd_share_update)
+
+    # share remove
+    share_remove = share_sub.add_parser("remove", help="Remove a share link")
+    share_remove.add_argument("file", help="File ID or path")
+    share_remove.add_argument("--drive", type=int, help="Drive ID")
+    share_remove.set_defaults(func=cmd_share_remove)
+
+    # share ls
+    share_ls = share_sub.add_parser("ls", help="List files with share links")
+    share_ls.add_argument("--drive", type=int, help="Drive ID")
+    share_ls.set_defaults(func=cmd_share_ls)

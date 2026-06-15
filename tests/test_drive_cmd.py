@@ -10,7 +10,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from ik import Drive, File, KDriveClient, KDriveError
+from ik import Drive, File, KDriveClient, KDriveError, ShareLink, SharedFile
 from ik.driver import (
     _get_default_drive,
     _make_progress,
@@ -24,6 +24,11 @@ from ik.driver import (
     cmd_mv,
     cmd_rm,
     cmd_search,
+    cmd_share_create,
+    cmd_share_get,
+    cmd_share_ls,
+    cmd_share_remove,
+    cmd_share_update,
     cmd_tree,
     cmd_upload,
 )
@@ -638,3 +643,256 @@ class TestMakeProgress:
         # 100% — bar should be 30 '#' chars, no '-' remaining
         assert "[" + "#" * 30 + "]" in out
         assert "100.0%" in out
+
+
+# ── cmd_share_* ──────────────────────────────────────────────────────
+
+
+class TestCmdShare:
+    def _link(self, **overrides) -> ShareLink:
+        from datetime import datetime
+
+        defaults = dict(
+            url="https://kdrive.example/s/abc",
+            file_id=100,
+            right="public",
+            valid_until=None,
+            can_download=True,
+            can_edit=False,
+            can_see_info=False,
+            can_comment=False,
+            can_request_access=False,
+            can_see_stats=False,
+            access_blocked=False,
+            created_at=datetime(2024, 1, 1),
+            updated_at=datetime(2024, 1, 2),
+            created_by=42,
+            views=0,
+        )
+        defaults.update(overrides)
+        return ShareLink(**defaults)
+
+    def test_create_prints_url(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.create_share_link.return_value = self._link(url="https://kdrive.example/s/abc")
+        out = io.StringIO()
+
+        cmd_share_create(
+            ns(
+                drive=1,
+                file="100",
+                right="public",
+                password=None,
+                valid_until=None,
+                can_download=True,
+                can_edit=False,
+                can_see_info=False,
+                can_comment=False,
+                can_request_access=False,
+                can_see_stats=False,
+            ),
+            client,
+            out=out,
+        )
+
+        assert out.getvalue() == "https://kdrive.example/s/abc\n"
+        # Default right=public, can_download=True, all others False
+        kwargs = client.create_share_link.call_args.kwargs
+        assert kwargs["right"] == "public"
+        assert kwargs["can_download"] is True
+        assert kwargs["can_edit"] is False
+
+    def test_create_with_password(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.create_share_link.return_value = self._link(right="password")
+        out = io.StringIO()
+
+        cmd_share_create(
+            ns(
+                drive=1,
+                file="100",
+                right="password",
+                password="hunter2",
+                valid_until=None,
+                can_download=True,
+                can_edit=False,
+                can_see_info=False,
+                can_comment=False,
+                can_request_access=False,
+                can_see_stats=False,
+            ),
+            client,
+            out=out,
+        )
+
+        kwargs = client.create_share_link.call_args.kwargs
+        assert kwargs["right"] == "password"
+        assert kwargs["password"] == "hunter2"
+
+    def test_create_by_path(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.return_value = 50
+        client.create_share_link.return_value = self._link(file_id=50)
+        out = io.StringIO()
+
+        cmd_share_create(
+            ns(
+                drive=1,
+                file="Docs/x",
+                right="public",
+                password=None,
+                valid_until=None,
+                can_download=True,
+                can_edit=False,
+                can_see_info=False,
+                can_comment=False,
+                can_request_access=False,
+                can_see_stats=False,
+            ),
+            client,
+            out=out,
+        )
+
+        client.resolve_path.assert_called_once_with(1, "Docs/x")
+        assert client.create_share_link.call_args.args[1] == 50  # file_id
+
+    def test_get_prints_json(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.get_share_link.return_value = self._link(right="password", can_edit=True)
+        out = io.StringIO()
+
+        cmd_share_get(ns(drive=1, file="100"), client, out=out)
+
+        payload = json.loads(out.getvalue())
+        assert payload["url"] == "https://kdrive.example/s/abc"
+        assert payload["file_id"] == 100
+        assert payload["right"] == "password"
+        assert payload["capabilities"]["can_edit"] is True
+        assert payload["capabilities"]["can_download"] is True
+        assert "views" in payload
+        assert "created_at" in payload
+
+    def test_update_calls_update_with_only_set_args(self) -> None:
+        from ik import _UNSET
+
+        client = Mock(spec=KDriveClient)
+        client.update_share_link.return_value = self._link()
+        out = io.StringIO()
+
+        # User passes only --can-edit
+        cmd_share_update(
+            ns(
+                drive=1,
+                file="100",
+                right=_UNSET,
+                password=_UNSET,
+                valid_until=_UNSET,
+                can_download=_UNSET,
+                can_edit=True,
+                can_see_info=_UNSET,
+                can_comment=_UNSET,
+                can_request_access=_UNSET,
+                can_see_stats=_UNSET,
+            ),
+            client,
+            out=out,
+        )
+
+        # Only can_edit is in the forwarded kwargs
+        kwargs = client.update_share_link.call_args.kwargs
+        assert kwargs == {"can_edit": True}
+        assert "Updated:" in out.getvalue()
+
+    def test_update_no_args_sends_nothing(self) -> None:
+        from ik import _UNSET
+
+        client = Mock(spec=KDriveClient)
+        client.update_share_link.return_value = self._link()
+        out = io.StringIO()
+
+        # No flags passed — every arg stays at the _UNSET default
+        cmd_share_update(
+            ns(
+                drive=1,
+                file="100",
+                right=_UNSET,
+                password=_UNSET,
+                valid_until=_UNSET,
+                can_download=_UNSET,
+                can_edit=_UNSET,
+                can_see_info=_UNSET,
+                can_comment=_UNSET,
+                can_request_access=_UNSET,
+                can_see_stats=_UNSET,
+            ),
+            client,
+            out=out,
+        )
+
+        # No fields forwarded → empty PUT body
+        assert client.update_share_link.call_args.kwargs == {}
+
+    def test_update_with_no_can_download(self) -> None:
+        from ik import _UNSET
+
+        client = Mock(spec=KDriveClient)
+        client.update_share_link.return_value = self._link(can_download=False)
+        out = io.StringIO()
+
+        cmd_share_update(
+            ns(
+                drive=1,
+                file="100",
+                right=_UNSET,
+                password=_UNSET,
+                valid_until=_UNSET,
+                can_download=False,  # user explicitly set this
+                can_edit=_UNSET,
+                can_see_info=_UNSET,
+                can_comment=_UNSET,
+                can_request_access=_UNSET,
+                can_see_stats=_UNSET,
+            ),
+            client,
+            out=out,
+        )
+
+        # can_download=False is forwarded (not filtered as _UNSET)
+        assert client.update_share_link.call_args.kwargs == {"can_download": False}
+
+    def test_remove(self) -> None:
+        client = Mock(spec=KDriveClient)
+        out = io.StringIO()
+
+        cmd_share_remove(ns(drive=1, file="100"), client, out=out)
+
+        client.delete_share_link.assert_called_once_with(1, 100)
+        assert out.getvalue() == "Removed share link for 100\n"
+
+    def test_ls_empty(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_shared_files.return_value = iter([])
+        out = io.StringIO()
+
+        cmd_share_ls(ns(drive=1), client, out=out)
+
+        assert out.getvalue() == "(no shared files)\n"
+
+    def test_ls_lists_files(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_shared_files.return_value = iter(
+            [
+                SharedFile(id=10, name="a.pdf", update_at=None, users=3),
+                SharedFile(id=11, name="b.jpg", update_at=None, users=0),
+            ]
+        )
+        out = io.StringIO()
+
+        cmd_share_ls(ns(drive=1), client, out=out)
+
+        text = out.getvalue()
+        assert "10" in text
+        assert "a.pdf" in text
+        assert "users: 3" in text
+        assert "11" in text
+        assert "b.jpg" in text

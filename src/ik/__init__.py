@@ -93,6 +93,89 @@ class MoveOperation:
         )
 
 
+@dataclass
+class ShareLink:
+    """Public share link for a kDrive file.
+
+    Returned by the get/create/update endpoints. Unix timestamps from the
+    API (`created_at`, `updated_at`, `valid_until`) are converted to
+    `datetime` for ergonomic use; pass `None` to `update_share_link` to
+    clear `valid_until`.
+    """
+
+    url: str
+    file_id: int
+    right: str
+    valid_until: datetime | None
+    can_download: bool
+    can_edit: bool
+    can_see_info: bool
+    can_comment: bool
+    can_request_access: bool
+    can_see_stats: bool
+    access_blocked: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+    created_by: int | None
+    views: int
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> ShareLink:
+        def ts(key: str) -> datetime | None:
+            v = data.get(key)
+            return datetime.fromtimestamp(v) if v else None
+
+        return cls(
+            url=data.get("url", ""),
+            file_id=data.get("file_id", 0),
+            right=data.get("right", "public"),
+            valid_until=ts("valid_until"),
+            can_download=bool(data.get("capabilities", {}).get("can_download", False)),
+            can_edit=bool(data.get("capabilities", {}).get("can_edit", False)),
+            can_see_info=bool(data.get("capabilities", {}).get("can_see_info", False)),
+            can_comment=bool(data.get("capabilities", {}).get("can_comment", False)),
+            can_request_access=bool(data.get("capabilities", {}).get("can_request_access", False)),
+            can_see_stats=bool(data.get("capabilities", {}).get("can_see_stats", False)),
+            access_blocked=bool(data.get("access_blocked", False)),
+            created_at=ts("created_at"),
+            updated_at=ts("updated_at"),
+            created_by=data.get("created_by"),
+            views=data.get("views", 0),
+        )
+
+
+@dataclass
+class SharedFile:
+    """A file that has a share link, from the list endpoint.
+
+    Different shape from `File` — fewer fields, no mime_type or paths.
+    """
+
+    id: int
+    name: str
+    update_at: datetime | None
+    users: int
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> SharedFile:
+        ts = data.get("update_at")
+        return cls(
+            id=data.get("id", 0),
+            name=data.get("name", "?"),
+            update_at=datetime.fromtimestamp(ts) if ts else None,
+            users=data.get("users", 0),
+        )
+
+
+_UNSET: Any = object()
+"""Sentinel for distinguishing 'argument not passed' from 'argument is None'.
+
+Used by `update_share_link` so callers can clear nullable fields (e.g.
+`valid_until=None` to remove an expiry) without also clearing fields they
+simply didn't pass.
+"""
+
+
 class KDriveClient:
     """HTTP client for the Infomaniak kDrive API."""
 
@@ -345,6 +428,107 @@ class KDriveClient:
             json_body=json_body,
         )
         return File.from_api(body.get("data", {}))
+
+    # ── Share Link Operations ──────────────────────────────────────────
+
+    def get_share_link(self, drive_id: int, file_id: int) -> ShareLink:
+        """Get the share link for a file (404 if no link exists)."""
+        body = self._request("GET", f"/2/drive/{drive_id}/files/{file_id}/link")
+        return ShareLink.from_api(body.get("data", {}))
+
+    def create_share_link(
+        self,
+        drive_id: int,
+        file_id: int,
+        *,
+        right: str = "public",
+        password: str | None = None,
+        valid_until: int | None = None,
+        can_download: bool = True,
+        can_edit: bool = False,
+        can_see_info: bool = False,
+        can_comment: bool = False,
+        can_request_access: bool = False,
+        can_see_stats: bool = False,
+    ) -> ShareLink:
+        """Create a public share link for a file.
+
+        `right` is one of `public`, `password`, `inherit`. When `password`,
+        the `password` arg is required. `valid_until` is a Unix timestamp
+        (or None for no expiry).
+        """
+        body: dict[str, Any] = {
+            "right": right,
+            "password": password,
+            "valid_until": valid_until,
+            "can_download": can_download,
+            "can_edit": can_edit,
+            "can_see_info": can_see_info,
+            "can_comment": can_comment,
+            "can_request_access": can_request_access,
+            "can_see_stats": can_see_stats,
+        }
+        resp = self._request("POST", f"/2/drive/{drive_id}/files/{file_id}/link", json_body=body)
+        return ShareLink.from_api(resp.get("data", {}))
+
+    def update_share_link(
+        self,
+        drive_id: int,
+        file_id: int,
+        *,
+        right: str | None = None,
+        password: str | None = None,
+        valid_until: Any = _UNSET,
+        can_download: bool | None = None,
+        can_edit: bool | None = None,
+        can_see_info: bool | None = None,
+        can_comment: bool | None = None,
+        can_request_access: bool | None = None,
+        can_see_stats: bool | None = None,
+    ) -> ShareLink:
+        """Partially update a share link. Only fields that are not `_UNSET`
+        are sent; pass `valid_until=None` to clear an existing expiry.
+        """
+        body: dict[str, Any] = {}
+        if right is not None:
+            body["right"] = right
+        if password is not None:
+            body["password"] = password
+        if valid_until is not _UNSET:
+            body["valid_until"] = valid_until
+        if can_download is not None:
+            body["can_download"] = can_download
+        if can_edit is not None:
+            body["can_edit"] = can_edit
+        if can_see_info is not None:
+            body["can_see_info"] = can_see_info
+        if can_comment is not None:
+            body["can_comment"] = can_comment
+        if can_request_access is not None:
+            body["can_request_access"] = can_request_access
+        if can_see_stats is not None:
+            body["can_see_stats"] = can_see_stats
+
+        resp = self._request("PUT", f"/2/drive/{drive_id}/files/{file_id}/link", json_body=body)
+        return ShareLink.from_api(resp.get("data", {}))
+
+    def delete_share_link(self, drive_id: int, file_id: int) -> None:
+        """Remove the share link for a file."""
+        self._request("DELETE", f"/2/drive/{drive_id}/files/{file_id}/link")
+
+    def list_shared_files(self, drive_id: int) -> Iterator[SharedFile]:
+        """List files in the drive that have a share link, paginated."""
+        cursor = None
+        while True:
+            params: dict[str, Any] = {}
+            if cursor:
+                params["cursor"] = cursor
+            body = self._request("GET", f"/3/drive/{drive_id}/files/links", params=params)
+            for f in body.get("data", []):
+                yield SharedFile.from_api(f)
+            if not body.get("has_more", False):
+                break
+            cursor = body.get("cursor")
 
     def resolve_path(self, drive_id: int, path: str) -> int:
         """Walk a path like 'Documents/Photos' and return the final file_id."""
