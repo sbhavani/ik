@@ -343,6 +343,70 @@ class TestMoveCopy:
         assert result.name == "Photos"
 
 
+class TestTrash:
+    def test_list_trash_single_page(self, file_dict: dict) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(200, {"data": [file_dict], "has_more": False})
+        client = make_client(session)
+
+        files = list(client.list_trash(1))
+
+        assert len(files) == 1
+        assert files[0].name == "report.pdf"
+        # GET verb, paginated endpoint
+        assert session.request.call_args.args[0] == "GET"
+
+    def test_list_trash_follows_cursor(self, file_dict: dict) -> None:
+        session = Mock(spec=requests.Session)
+        page1 = {"data": [file_dict], "has_more": True, "cursor": "c1"}
+        page2 = {"data": [], "has_more": False}
+        session.request.return_value = make_response(200, page1)
+        session.request.side_effect = [make_response(200, page1), make_response(200, page2)]
+        client = make_client(session)
+
+        files = list(client.list_trash(1))
+
+        assert len(files) == 1
+        # Two calls: first no cursor, second with cursor=c1
+        assert session.request.call_count == 2
+        assert session.request.call_args_list[1].kwargs["params"] == {"cursor": "c1"}
+
+    def test_restore_file_sync(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(200, {"data": True})
+        client = make_client(session)
+
+        result = client.restore_file(drive_id=1, file_id=999, destination_directory_id=1)
+
+        assert result is None  # sync → no cancel handle
+        # POST verb, destination in body
+        assert session.request.call_args.args[0] == "POST"
+        assert session.request.call_args.kwargs["json"] == {"destination_directory_id": 1}
+
+    def test_restore_file_async(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200, {"data": {"cancel_id": "op-r-1", "valid_until": 1717200000}}
+        )
+        client = make_client(session)
+
+        result = client.restore_file(drive_id=1, file_id=999)
+
+        assert result is not None
+        assert result.cancel_id == "op-r-1"
+
+    def test_empty_trash(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(200, {"data": True})
+        client = make_client(session)
+
+        client.empty_trash(drive_id=1)
+
+        # DELETE verb, no body
+        assert session.request.call_args.args[0] == "DELETE"
+        assert session.request.call_args.args[1] == "https://api.infomaniak.com/2/drive/1/trash"
+
+
 class TestUploadStreaming:
     def test_streaming_small_file_single_chunk(self, tmp_path, file_dict: dict) -> None:
         f = tmp_path / "small.bin"

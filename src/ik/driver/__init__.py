@@ -452,6 +452,77 @@ def cmd_share_ls(args: argparse.Namespace, client: KDriveClient, out: TextIO = s
         out.write(f"  {sf.id:>10}  {sf.name}  (users: {sf.users})\n")
 
 
+def cmd_trash_ls(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
+    """List files in the trash."""
+    drive_id = args.drive or _get_default_drive(client)
+    files = list(client.list_trash(drive_id))
+
+    if _is_json(args):
+        out.write(json.dumps([f.to_dict() for f in files], indent=2) + "\n")
+        return
+    if not files:
+        out.write("(trash is empty)\n")
+        return
+    for f in files:
+        marker = "d" if f.is_directory else "-"
+        size_str = _format_size(f.size) if not f.is_directory else "DIR"
+        out.write(f"  {marker} {f.id:>10}  {size_str:>8}  {f.name}\n")
+
+
+def cmd_trash_empty(
+    args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout
+) -> None:
+    """Permanently delete everything in the trash. Prompts unless --yes."""
+    drive_id = args.drive or _get_default_drive(client)
+
+    if not getattr(args, "yes", False):
+        if not sys.stdin.isatty():
+            raise KDriveError("Refusing to empty trash without --yes in non-interactive mode")
+        response = (
+            input("Empty trash? This permanently deletes all trashed files. [y/N] ").strip().lower()
+        )
+        if response not in ("y", "yes"):
+            raise KDriveError("Aborted")
+
+    client.empty_trash(drive_id)
+    if _is_json(args):
+        out.write(json.dumps({"emptied": True}, indent=2) + "\n")
+        return
+    out.write("Trash emptied.\n")
+
+
+def cmd_trash_restore(
+    args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout
+) -> None:
+    """Restore a file from the trash. Async on the kDrive side; may return
+    a cancel handle for polling or aborting."""
+    drive_id = args.drive or _get_default_drive(client)
+    file_id = _resolve_source_id(client, drive_id, args.file)
+    destination_id = 1 if args.to is None else _resolve_directory(client, drive_id, args.to)
+
+    op = client.restore_file(drive_id, file_id, destination_id)
+    if _is_json(args):
+        if op is None:
+            out.write(json.dumps({"restored": True}, indent=2) + "\n")
+        else:
+            out.write(
+                json.dumps(
+                    {
+                        "cancel_id": op.cancel_id,
+                        "valid_until": op.valid_until.isoformat() if op.valid_until else None,
+                        "async": True,
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+        return
+    if op is None:
+        out.write(f"Restored: {args.file}\n")
+    else:
+        out.write(f"Restore queued: cancel_id={op.cancel_id}\n")
+
+
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
@@ -634,3 +705,28 @@ def add_drive_commands(
     )
     share_ls.add_argument("--drive", type=int, help="Drive ID")
     share_ls.set_defaults(func=cmd_share_ls)
+
+    # drive trash
+    trash = drive_sub.add_parser("trash", help="Manage the trash", parents=[global_flags])
+    trash_sub = trash.add_subparsers(dest="trash_cmd", required=True)
+
+    # trash ls
+    trash_ls = trash_sub.add_parser("ls", help="List trashed files", parents=[global_flags])
+    trash_ls.add_argument("--drive", type=int, help="Drive ID")
+    trash_ls.set_defaults(func=cmd_trash_ls)
+
+    # trash empty
+    trash_empty = trash_sub.add_parser(
+        "empty", help="Permanently empty the trash", parents=[global_flags]
+    )
+    trash_empty.add_argument("--drive", type=int, help="Drive ID")
+    trash_empty.set_defaults(func=cmd_trash_empty)
+
+    # trash restore
+    trash_restore = trash_sub.add_parser(
+        "restore", help="Restore a file from the trash", parents=[global_flags]
+    )
+    trash_restore.add_argument("file", help="File ID or path")
+    trash_restore.add_argument("--to", help="Destination directory (ID or path); defaults to root")
+    trash_restore.add_argument("--drive", type=int, help="Drive ID")
+    trash_restore.set_defaults(func=cmd_trash_restore)

@@ -29,6 +29,9 @@ from ik.driver import (
     cmd_share_ls,
     cmd_share_remove,
     cmd_share_update,
+    cmd_trash_empty,
+    cmd_trash_ls,
+    cmd_trash_restore,
     cmd_tree,
     cmd_upload,
 )
@@ -1241,3 +1244,155 @@ class TestCmdShare:
         assert payload == [
             {"id": 10, "name": "a.pdf", "update_at": "2024-01-01T00:00:00", "users": 3}
         ]
+
+
+# ── cmd_trash ──────────────────────────────────────────────────────────
+
+
+class TestCmdTrashLs:
+    def test_empty(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_trash.return_value = iter([])
+        out = io.StringIO()
+
+        cmd_trash_ls(ns(drive=1), client, out=out)
+
+        assert out.getvalue() == "(trash is empty)\n"
+
+    def test_lists_files(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_trash.return_value = iter(
+            [
+                make_file(id=10, name="old.txt"),
+                make_file(id=11, name="sub", is_directory=True, size=0),
+            ]
+        )
+        out = io.StringIO()
+
+        cmd_trash_ls(ns(drive=1), client, out=out)
+
+        text = out.getvalue()
+        assert "old.txt" in text
+        assert "10" in text
+        assert "sub" in text
+        # Directory shows DIR instead of size
+        assert "DIR" in text
+
+    def test_json_output(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_trash.return_value = iter([make_file(id=10, name="old.txt")])
+        out = io.StringIO()
+
+        cmd_trash_ls(ns(drive=1, output="json"), client, out=out)
+
+        payload = json.loads(out.getvalue())
+        assert payload[0]["name"] == "old.txt"
+        assert payload[0]["id"] == 10
+
+
+class TestCmdTrashEmpty:
+    def test_yes_skips_prompt(self, monkeypatch) -> None:
+        client = Mock(spec=KDriveClient)
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+        cmd_trash_empty(ns(drive=1, yes=True), client, out=io.StringIO())
+
+        client.empty_trash.assert_called_once_with(1)
+
+    def test_no_yes_non_tty_errors(self, monkeypatch) -> None:
+        client = Mock(spec=KDriveClient)
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+        with pytest.raises(KDriveError, match="non-interactive"):
+            cmd_trash_empty(ns(drive=1), client, out=io.StringIO())
+        client.empty_trash.assert_not_called()
+
+    def test_prompt_user_says_yes(self, monkeypatch) -> None:
+        client = Mock(spec=KDriveClient)
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        out = io.StringIO()
+
+        cmd_trash_empty(ns(drive=1), client, out=out)
+
+        client.empty_trash.assert_called_once_with(1)
+        assert "Trash emptied" in out.getvalue()
+
+    def test_prompt_user_says_no(self, monkeypatch) -> None:
+        client = Mock(spec=KDriveClient)
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+
+        with pytest.raises(KDriveError, match="Aborted"):
+            cmd_trash_empty(ns(drive=1), client, out=io.StringIO())
+        client.empty_trash.assert_not_called()
+
+    def test_json_output(self) -> None:
+        client = Mock(spec=KDriveClient)
+        out = io.StringIO()
+
+        cmd_trash_empty(ns(drive=1, yes=True, output="json"), client, out=out)
+
+        assert json.loads(out.getvalue()) == {"emptied": True}
+
+
+class TestCmdTrashRestore:
+    def test_by_id_sync(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.restore_file.return_value = None  # sync
+        out = io.StringIO()
+
+        cmd_trash_restore(ns(drive=1, file="123", to=None), client, out=out)
+
+        client.restore_file.assert_called_once_with(1, 123, 1)
+        assert out.getvalue() == "Restored: 123\n"
+
+    def test_by_id_async(self) -> None:
+        from ik import MoveOperation
+
+        client = Mock(spec=KDriveClient)
+        client.restore_file.return_value = MoveOperation(cancel_id="op-r-1", valid_until=None)
+        out = io.StringIO()
+
+        cmd_trash_restore(ns(drive=1, file="123", to=None), client, out=out)
+
+        assert "Restore queued: cancel_id=op-r-1" in out.getvalue()
+
+    def test_to_path_resolves(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.return_value = 50
+        client.restore_file.return_value = None
+
+        cmd_trash_restore(ns(drive=1, file="123", to="Archive"), client, out=io.StringIO())
+
+        client.resolve_path.assert_called_once_with(1, "Archive")
+        client.restore_file.assert_called_once_with(1, 123, 50)
+
+    def test_json_output_sync(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.restore_file.return_value = None
+        out = io.StringIO()
+
+        cmd_trash_restore(ns(drive=1, file="123", to=None, output="json"), client, out=out)
+
+        assert json.loads(out.getvalue()) == {"restored": True}
+
+    def test_json_output_async(self) -> None:
+        from datetime import datetime
+
+        from ik import MoveOperation
+
+        client = Mock(spec=KDriveClient)
+        client.restore_file.return_value = MoveOperation(
+            cancel_id="op-r-2", valid_until=datetime(2024, 6, 1, 12, 0, 0)
+        )
+        out = io.StringIO()
+
+        cmd_trash_restore(ns(drive=1, file="123", to=None, output="json"), client, out=out)
+
+        payload = json.loads(out.getvalue())
+        assert payload == {
+            "cancel_id": "op-r-2",
+            "valid_until": "2024-06-01T12:00:00",
+            "async": True,
+        }

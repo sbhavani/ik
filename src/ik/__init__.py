@@ -487,6 +487,48 @@ class KDriveClient:
         )
         return File.from_api(body.get("data", {}))
 
+    # ── Trash Operations ───────────────────────────────────────────────
+
+    def list_trash(self, drive_id: int) -> Iterator[File]:
+        """List files in the trash, paginated like `list_files`."""
+        cursor = None
+        while True:
+            params: dict[str, Any] = {}
+            if cursor:
+                params["cursor"] = cursor
+            body = self._request("GET", f"/3/drive/{drive_id}/trash", params=params)
+            for f in body.get("data", []):
+                yield File.from_api(f)
+            if not body.get("has_more", False):
+                break
+            cursor = body.get("cursor")
+
+    def restore_file(
+        self,
+        drive_id: int,
+        file_id: int,
+        destination_directory_id: int = 1,
+    ) -> MoveOperation | None:
+        """Restore a trashed file.
+
+        Returns a `MoveOperation` if the restore is async (kDrive can run
+        it in the background and returns a cancel handle), or `None` if
+        it completed synchronously.
+        """
+        body = self._request(
+            "POST",
+            f"/2/drive/{drive_id}/trash/{file_id}/restore",
+            json_body={"destination_directory_id": destination_directory_id},
+        )
+        data = body.get("data", {})
+        if isinstance(data, dict) and "cancel_id" in data:
+            return MoveOperation.from_api(data)
+        return None
+
+    def empty_trash(self, drive_id: int) -> None:
+        """Permanently delete everything in the trash."""
+        self._request("DELETE", f"/2/drive/{drive_id}/trash")
+
     # ── Share Link Operations ──────────────────────────────────────────
 
     def get_share_link(self, drive_id: int, file_id: int) -> ShareLink:
