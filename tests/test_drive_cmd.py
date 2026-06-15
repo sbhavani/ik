@@ -35,6 +35,9 @@ from ik.driver import (
 
 
 def ns(**kwargs) -> argparse.Namespace:
+    # quiet/yes default to False so existing tests don't need to thread them.
+    kwargs.setdefault("quiet", False)
+    kwargs.setdefault("yes", False)
     return argparse.Namespace(**kwargs)
 
 
@@ -248,6 +251,19 @@ class TestCmdUpload:
                 out=io.StringIO(),
             )
 
+    def test_quiet_suppresses_status(self, tmp_path) -> None:
+        local = tmp_path / "data.bin"
+        local.write_bytes(b"hello")
+        client = Mock(spec=KDriveClient)
+        client.upload_file.return_value = make_file(id=300, name="data.bin")
+        out = io.StringIO()
+
+        cmd_upload(ns(drive=1, local=str(local), dir=7, quiet=True), client, out=out)
+
+        text = out.getvalue()
+        assert "Uploading" not in text
+        assert "Uploaded: data.bin (id: 300)" in text
+
 
 # ── cmd_download ──────────────────────────────────────────────────────
 
@@ -282,6 +298,44 @@ class TestCmdDownload:
 
         # tmp_path is a directory → filename should be appended inside it
         assert (tmp_path / "data.bin").exists()
+
+    def test_quiet_suppresses_status(self, tmp_path) -> None:
+        client = Mock(spec=KDriveClient)
+        client.get_file.return_value = make_file(id=100, name="data.bin")
+        resp = Mock()
+        resp.headers = {"Content-Length": "1"}
+        resp.iter_content.return_value = iter([b"x"])
+        client.download_file.return_value = resp
+        out = io.StringIO()
+
+        cmd_download(
+            ns(drive=1, file="100", local=str(tmp_path), quiet=True),
+            client,
+            out=out,
+        )
+
+        text = out.getvalue()
+        assert "Downloading" not in text
+        assert "Saved:" in text
+
+    def test_default_includes_status(self, tmp_path) -> None:
+        client = Mock(spec=KDriveClient)
+        client.get_file.return_value = make_file(id=100, name="data.bin")
+        resp = Mock()
+        resp.headers = {"Content-Length": "1"}
+        resp.iter_content.return_value = iter([b"x"])
+        client.download_file.return_value = resp
+        out = io.StringIO()
+
+        cmd_download(
+            ns(drive=1, file="100", local=str(tmp_path)),
+            client,
+            out=out,
+        )
+
+        text = out.getvalue()
+        assert "Downloading data.bin" in text
+        assert "Saved:" in text
 
 
 # ── cmd_search ────────────────────────────────────────────────────────
@@ -323,7 +377,7 @@ class TestCmdRm:
         client = Mock(spec=KDriveClient)
         out = io.StringIO()
 
-        cmd_rm(ns(drive=1, path="123"), client, out=out)
+        cmd_rm(ns(drive=1, path="123", yes=True), client, out=out)
 
         client.trash_file.assert_called_once_with(1, 123)
         client.resolve_path.assert_not_called()
@@ -334,11 +388,56 @@ class TestCmdRm:
         client.resolve_path.return_value = 456
         out = io.StringIO()
 
-        cmd_rm(ns(drive=1, path="Docs/old.txt"), client, out=out)
+        cmd_rm(ns(drive=1, path="Docs/old.txt", yes=True), client, out=out)
 
         client.resolve_path.assert_called_once_with(1, "Docs/old.txt")
         client.trash_file.assert_called_once_with(1, 456)
         assert out.getvalue() == "Trashed: Docs/old.txt\n"
+
+    def test_yes_skips_prompt(self, monkeypatch) -> None:
+        # --yes means no prompt, no input() call, no isatty() check.
+        client = Mock(spec=KDriveClient)
+        out = io.StringIO()
+        # If these were called, the test would error.
+        monkeypatch.setattr(
+            "builtins.input", lambda _: (_ for _ in ()).throw(AssertionError("input was called"))
+        )
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+        cmd_rm(ns(drive=1, path="123", yes=True), client, out=out)
+
+        client.trash_file.assert_called_once_with(1, 123)
+
+    def test_no_yes_non_tty_errors(self, monkeypatch) -> None:
+        # No TTY + no --yes → refuse to proceed.
+        client = Mock(spec=KDriveClient)
+        out = io.StringIO()
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+        with pytest.raises(KDriveError, match="non-interactive"):
+            cmd_rm(ns(drive=1, path="123"), client, out=out)
+        client.trash_file.assert_not_called()
+
+    def test_prompt_user_says_yes(self, monkeypatch) -> None:
+        client = Mock(spec=KDriveClient)
+        out = io.StringIO()
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+
+        cmd_rm(ns(drive=1, path="123"), client, out=out)
+
+        client.trash_file.assert_called_once_with(1, 123)
+        assert "Trashed: 123" in out.getvalue()
+
+    def test_prompt_user_says_no_aborts(self, monkeypatch) -> None:
+        client = Mock(spec=KDriveClient)
+        out = io.StringIO()
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+
+        with pytest.raises(KDriveError, match="Aborted"):
+            cmd_rm(ns(drive=1, path="123"), client, out=out)
+        client.trash_file.assert_not_called()
 
 
 # ── cmd_info ──────────────────────────────────────────────────────────
@@ -516,6 +615,40 @@ class TestCmdMv:
         client.list_drives.assert_called_once()
         # drive_id comes from the default-drive fallback
         assert client.move_file.call_args.args[0] == 99
+
+    def test_quiet_suppresses_async_note(self) -> None:
+        from ik import MoveOperation
+
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.return_value = 50
+        client.move_file.return_value = MoveOperation(cancel_id="op-5", valid_until=None)
+        out = io.StringIO()
+
+        cmd_mv(
+            ns(drive=1, src="123", dst="Archive", name=None, quiet=True),
+            client,
+            out=out,
+        )
+
+        text = out.getvalue()
+        assert "Move queued" in text
+        assert "async" not in text.lower()
+
+    def test_default_includes_async_note(self) -> None:
+        from ik import MoveOperation
+
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.return_value = 50
+        client.move_file.return_value = MoveOperation(cancel_id="op-6", valid_until=None)
+        out = io.StringIO()
+
+        cmd_mv(
+            ns(drive=1, src="123", dst="Archive", name=None),
+            client,
+            out=out,
+        )
+
+        assert "async" in out.getvalue().lower()
 
 
 # ── cmd_cp ────────────────────────────────────────────────────────────

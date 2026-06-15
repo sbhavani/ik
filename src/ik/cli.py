@@ -116,6 +116,12 @@ def main() -> None:
         description="Infomaniak CLI - AWS CLI style for Infomaniak Cloud",
     )
     parser.add_argument("--token", help="API token")
+    parser.add_argument(
+        "--quiet", action="store_true", help="Suppress non-essential output (status lines)"
+    )
+    parser.add_argument(
+        "--yes", action="store_true", help="Skip confirmation prompts (for scripts)"
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     # configure

@@ -164,3 +164,46 @@ class TestCmdWhoami:
         assert "Account ID: 7" in out
         assert "Name: Alice" in out
         assert "Email: alice@example.com" in out
+
+
+# ── global --quiet / --yes parsing ────────────────────────────────────
+
+
+class TestGlobalFlags:
+    def test_defaults(self) -> None:
+        import sys
+        from unittest.mock import patch
+
+        from ik.cli import main as _main
+
+        with patch.object(sys, "argv", ["ik", "drives"]):
+            with patch("ik.cli._resolve_token", return_value="t"):
+                with patch("ik.cli.KDriveClient") as KC:
+                    KC.return_value.list_drives.return_value = []
+                    with patch("ik.cli.cmd_drives") as cd:
+                        try:
+                            _main()
+                        except SystemExit:
+                            pass
+                        captured = cd.call_args.args[0]
+                        assert captured.quiet is False
+                        assert captured.yes is False
+
+    def test_quiet_and_yes_parsed(self) -> None:
+        import sys
+        from unittest.mock import patch
+
+        from ik.cli import main as _main
+
+        with patch.object(sys, "argv", ["ik", "--quiet", "--yes", "drives"]):
+            with patch("ik.cli._resolve_token", return_value="t"):
+                with patch("ik.cli.KDriveClient") as KC:
+                    KC.return_value.list_drives.return_value = []
+                    with patch("ik.cli.cmd_drives") as cd:
+                        try:
+                            _main()
+                        except SystemExit:
+                            pass
+                        captured = cd.call_args.args[0]
+                        assert captured.quiet is True
+                        assert captured.yes is True

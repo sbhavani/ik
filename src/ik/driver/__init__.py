@@ -136,10 +136,12 @@ def cmd_upload(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys
 
     if total < CHUNKED_THRESHOLD:
         data = local_path.read_bytes()
-        out.write(f"Uploading {local_path.name} ({total / 1024:.1f}KB)...\n")
+        if not getattr(args, "quiet", False):
+            out.write(f"Uploading {local_path.name} ({total / 1024:.1f}KB)...\n")
         result = client.upload_file(drive_id, directory_id, local_path.name, data)
     else:
-        out.write(f"Uploading {local_path.name} ({total / 1024 / 1024:.1f}MB) — chunked...\n")
+        if not getattr(args, "quiet", False):
+            out.write(f"Uploading {local_path.name} ({total / 1024 / 1024:.1f}MB) — chunked...\n")
         result = client.upload_file_streaming(
             drive_id, directory_id, local_path.name, local_path, on_progress=progress
         )
@@ -160,7 +162,7 @@ def cmd_download(args: argparse.Namespace, client: KDriveClient, out: TextIO = s
     if local_path.is_dir():
         local_path = local_path / info.name
 
-    out.write(f"Downloading {info.name}...\n")
+    out.write(f"Downloading {info.name}...\n" if not getattr(args, "quiet", False) else "")
     resp = client.download_file(drive_id, file_id)
     total = int(resp.headers.get("Content-Length", 0)) if resp.headers else 0
     progress = _make_progress(info.name, total, sys.stderr, sys.stderr.isatty())
@@ -191,7 +193,7 @@ def cmd_search(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys
 
 
 def cmd_rm(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
-    """Move a file to trash."""
+    """Move a file to trash. Prompts for confirmation unless --yes is set."""
     drive_id = args.drive or _get_default_drive(client)
     path = args.path
 
@@ -199,6 +201,13 @@ def cmd_rm(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.std
         file_id = int(path)
     else:
         file_id = client.resolve_path(drive_id, path)
+
+    if not getattr(args, "yes", False):
+        if not sys.stdin.isatty():
+            raise KDriveError("Refusing to trash without --yes in non-interactive mode")
+        response = input(f"Trash {path}? [y/N] ").strip().lower()
+        if response not in ("y", "yes"):
+            raise KDriveError("Aborted")
 
     client.trash_file(drive_id, file_id)
     out.write(f"Trashed: {path}\n")
@@ -243,7 +252,8 @@ def cmd_mv(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.std
 
     op = client.move_file(drive_id, src_id, dst_id, name=args.name)
     out.write(f"Move queued: cancel_id={op.cancel_id}\n")
-    out.write("(Move is async on the kDrive side; the operation runs in the background.)\n")
+    if not getattr(args, "quiet", False):
+        out.write("(Move is async on the kDrive side; the operation runs in the background.)\n")
 
 
 def cmd_cp(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
