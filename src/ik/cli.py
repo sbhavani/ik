@@ -22,6 +22,7 @@ def _resolve_token(args: argparse.Namespace) -> str:
     config_path = os.path.expanduser("~/.config/ik/config.json")
     if os.path.exists(config_path):
         import json
+
         with open(config_path) as f:
             config = json.load(f)
             if config.get("token"):
@@ -39,6 +40,7 @@ def _resolve_account_id(token: str) -> int | None:
     config_path = os.path.expanduser("~/.config/ik/config.json")
     if os.path.exists(config_path):
         import json
+
         with open(config_path) as f:
             config = json.load(f)
             if config.get("account_id"):
@@ -97,8 +99,6 @@ def cmd_drives(args: argparse.Namespace, client: KDriveClient) -> None:
 
 def cmd_whoami(args: argparse.Namespace, client: KDriveClient) -> None:
     """Show current user info."""
-    import json
-
     body = client._request("GET", "/1/accounts")
     accounts = body.get("data", [])
     if not accounts:

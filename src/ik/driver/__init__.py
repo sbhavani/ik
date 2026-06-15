@@ -6,7 +6,7 @@ import argparse
 import sys
 from typing import TextIO
 
-from .. import Drive, File, KDriveClient, KDriveError
+from .. import File, KDriveClient, KDriveError
 
 
 def _format_size(size: int) -> str:
@@ -30,6 +30,7 @@ def _print_file_entry(f: File, show_id: bool = False) -> None:
 
 
 # ── Command Implementations ──────────────────────────────────────────
+
 
 def cmd_ls(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
     """List files in a directory."""
@@ -66,7 +67,7 @@ def cmd_tree(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.s
                 extension = "`   " if is_last_item else "|  "
                 walk(f.id, prefix + extension, is_last_item)
 
-    out.write(f".\n")
+    out.write(".\n")
     walk(root_id)
 
 
@@ -178,7 +179,34 @@ def cmd_info(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.s
     out.write(json.dumps(data, indent=2) + "\n")
 
 
+def cmd_mv(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
+    """Move a file or directory to another directory.
+
+    kDrive move is async — the operation runs in the background and a
+    cancel_id is returned. Use /1/async/tasks/{id} to poll or
+    /2/drive/{drive_id}/cancel to abort.
+    """
+    drive_id = args.drive or _get_default_drive(client)
+    src_id = _resolve_source_id(client, drive_id, args.src)
+    dst_id = _resolve_directory(client, drive_id, args.dst)
+
+    op = client.move_file(drive_id, src_id, dst_id, name=args.name)
+    out.write(f"Move queued: cancel_id={op.cancel_id}\n")
+    out.write("(Move is async on the kDrive side; the operation runs in the background.)\n")
+
+
+def cmd_cp(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
+    """Copy a file or directory to another directory."""
+    drive_id = args.drive or _get_default_drive(client)
+    src_id = _resolve_source_id(client, drive_id, args.src)
+    dst_id = _resolve_directory(client, drive_id, args.dst)
+
+    result = client.copy_file(drive_id, src_id, dst_id, name=args.name)
+    out.write(f"Copied: {result.name} (id: {result.id})\n")
+
+
 # ── Helpers ───────────────────────────────────────────────────────────
+
 
 def _get_default_drive(client: KDriveClient) -> int:
     """Get the configured default drive or prompt."""
@@ -190,7 +218,7 @@ def _get_default_drive(client: KDriveClient) -> int:
 
     for i, d in enumerate(drives):
         out = sys.stdout
-        out.write(f"  [{i+1}] {d.name} ({d.id})\n")
+        out.write(f"  [{i + 1}] {d.name} ({d.id})\n")
     out.write("\n")
     raise KDriveError("Multiple drives found. Use --drive to specify.")
 
@@ -202,6 +230,13 @@ def _resolve_directory(client: KDriveClient, drive_id: int, path: str | None) ->
     if path.isdigit():
         return int(path)
     return client.resolve_path(drive_id, path)
+
+
+def _resolve_source_id(client: KDriveClient, drive_id: int, src: str) -> int:
+    """Resolve a source reference (digit string or path) to a file/dir ID."""
+    if src.isdigit():
+        return int(src)
+    return client.resolve_path(drive_id, src)
 
 
 def add_drive_commands(parser: argparse.ArgumentParser) -> None:
@@ -260,3 +295,19 @@ def add_drive_commands(parser: argparse.ArgumentParser) -> None:
     info.add_argument("path", help="File ID or path")
     info.add_argument("--drive", type=int, help="Drive ID")
     info.set_defaults(func=cmd_info)
+
+    # drive mv
+    mv = drive_sub.add_parser("mv", help="Move a file or directory")
+    mv.add_argument("src", help="Source file/dir (ID or path)")
+    mv.add_argument("dst", help="Destination directory (ID or path)")
+    mv.add_argument("--name", help="New name for rename-and-move")
+    mv.add_argument("--drive", type=int, help="Drive ID")
+    mv.set_defaults(func=cmd_mv)
+
+    # drive cp
+    cp = drive_sub.add_parser("cp", help="Copy a file or directory")
+    cp.add_argument("src", help="Source file/dir (ID or path)")
+    cp.add_argument("dst", help="Destination directory (ID or path)")
+    cp.add_argument("--name", help="New name for rename-and-copy")
+    cp.add_argument("--drive", type=int, help="Drive ID")
+    cp.set_defaults(func=cmd_cp)

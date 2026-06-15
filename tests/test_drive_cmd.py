@@ -14,10 +14,13 @@ from ik import Drive, File, KDriveClient, KDriveError
 from ik.driver import (
     _get_default_drive,
     _resolve_directory,
+    _resolve_source_id,
+    cmd_cp,
     cmd_download,
     cmd_info,
     cmd_ls,
     cmd_mkdir,
+    cmd_mv,
     cmd_rm,
     cmd_search,
     cmd_tree,
@@ -419,3 +422,133 @@ class TestResolveDirectory:
 
         assert _resolve_directory(client, 1, "Photos") == 99
         client.resolve_path.assert_called_once_with(1, "Photos")
+
+
+# ── _resolve_source_id ───────────────────────────────────────────────
+
+
+class TestResolveSourceId:
+    def test_digit_returns_int(self) -> None:
+        client = Mock(spec=KDriveClient)
+        assert _resolve_source_id(client, 1, "123") == 123
+        client.resolve_path.assert_not_called()
+
+    def test_path_calls_resolve(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.return_value = 456
+
+        assert _resolve_source_id(client, 1, "Docs/x") == 456
+        client.resolve_path.assert_called_once_with(1, "Docs/x")
+
+
+# ── cmd_mv ────────────────────────────────────────────────────────────
+
+
+class TestCmdMv:
+    def test_by_id(self) -> None:
+        from ik import MoveOperation
+
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.return_value = 50  # for "Archive" dst
+        client.move_file.return_value = MoveOperation(cancel_id="op-1", valid_until=None)
+        out = io.StringIO()
+
+        cmd_mv(ns(drive=1, src="123", dst="Archive", name=None), client, out=out)
+
+        client.move_file.assert_called_once_with(1, 123, 50, name=None)
+        assert "Move queued: cancel_id=op-1" in out.getvalue()
+        assert "async" in out.getvalue().lower()
+
+    def test_by_path(self) -> None:
+        from ik import MoveOperation
+
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.side_effect = [200, 50]
+        client.move_file.return_value = MoveOperation(cancel_id="op-2", valid_until=None)
+        out = io.StringIO()
+
+        cmd_mv(
+            ns(drive=1, src="Docs/old.txt", dst="Archive", name=None),
+            client,
+            out=out,
+        )
+
+        # First resolve = source path, second = destination directory
+        assert client.resolve_path.call_args_list[0].args == (1, "Docs/old.txt")
+        client.move_file.assert_called_once_with(1, 200, 50, name=None)
+
+    def test_with_name(self) -> None:
+        from ik import MoveOperation
+
+        client = Mock(spec=KDriveClient)
+        client.move_file.return_value = MoveOperation(cancel_id="op-3", valid_until=None)
+
+        cmd_mv(
+            ns(drive=1, src="123", dst="50", name="new.txt"),
+            client,
+            out=io.StringIO(),
+        )
+
+        # name forwarded to client
+        assert client.move_file.call_args.kwargs["name"] == "new.txt"
+
+    def test_default_drive(self) -> None:
+        from ik import MoveOperation
+
+        client = Mock(spec=KDriveClient)
+        client.list_drives.return_value = [make_drive(id=99)]
+        client.move_file.return_value = MoveOperation(cancel_id="op-4", valid_until=None)
+
+        cmd_mv(
+            ns(drive=None, src="123", dst="Archive", name=None),
+            client,
+            out=io.StringIO(),
+        )
+
+        client.list_drives.assert_called_once()
+        # drive_id comes from the default-drive fallback
+        assert client.move_file.call_args.args[0] == 99
+
+
+# ── cmd_cp ────────────────────────────────────────────────────────────
+
+
+class TestCmdCp:
+    def test_by_id(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.return_value = 50  # for "Archive" dst
+        client.copy_file.return_value = make_file(id=200, name="copy.pdf")
+        out = io.StringIO()
+
+        cmd_cp(ns(drive=1, src="123", dst="Archive", name=None), client, out=out)
+
+        client.copy_file.assert_called_once_with(1, 123, 50, name=None)
+        assert out.getvalue() == "Copied: copy.pdf (id: 200)\n"
+
+    def test_by_path(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.side_effect = [200, 50]
+        client.copy_file.return_value = make_file(id=201, name="x.txt")
+
+        cmd_cp(
+            ns(drive=1, src="Docs/x.txt", dst="Archive", name=None),
+            client,
+            out=io.StringIO(),
+        )
+
+        assert client.resolve_path.call_args_list[0].args == (1, "Docs/x.txt")
+        client.copy_file.assert_called_once_with(1, 200, 50, name=None)
+
+    def test_with_name(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.copy_file.return_value = make_file(id=202, name="renamed.pdf")
+        out = io.StringIO()
+
+        cmd_cp(
+            ns(drive=1, src="123", dst="50", name="renamed.pdf"),
+            client,
+            out=out,
+        )
+
+        assert client.copy_file.call_args.kwargs["name"] == "renamed.pdf"
+        assert out.getvalue() == "Copied: renamed.pdf (id: 202)\n"

@@ -5,6 +5,16 @@ AWS CLI style command-line tool for Infomaniak Cloud Services.
 ## Installation
 
 ```bash
+# Recommended
+uv tool install ik
+
+# Or, run without installing
+uvx ik
+```
+
+Or with pip:
+
+```bash
 pip install ik
 ```
 
@@ -34,6 +44,9 @@ ik drive download 123       # Download file by ID
 ik drive search "invoice"   # Search files
 ik drive info 123           # Get file details
 ik drive rm 123             # Move to trash
+ik drive mv 123 Archive/    # Move to directory
+ik drive cp 123 Archive/    # Copy to directory
+ik drive mv 123 Archive/ --name new.pdf   # Move and rename
 ```
 
 ### Account
@@ -56,4 +69,15 @@ ik drive download 123 --local ./
 
 # Search for files containing "budget"
 ik drive search "budget"
+```
+
+## Development
+
+```bash
+git clone https://github.com/sbhavani/ik.git
+cd ik
+uv sync --group dev
+uv run pytest         # run tests
+uv run ruff check .   # lint
+uv run ruff format .  # format
 ```

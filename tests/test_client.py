@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 import requests
 
-from ik import KDriveClient, KDriveError
+from ik import KDriveClient, KDriveError, MoveOperation
 from tests.conftest import make_response
 
 
@@ -254,3 +254,90 @@ class TestResolvePath:
 
         with pytest.raises(KDriveError, match="'Nope' not found"):
             client.resolve_path(1, "Nope")
+
+
+class TestMoveCopy:
+    def test_move_file(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200,
+            {"data": {"cancel_id": "abc-123", "valid_until": 1_700_000_000}},
+        )
+        client = make_client(session)
+
+        op = client.move_file(drive_id=1, file_id=100, destination_directory_id=50)
+
+        assert isinstance(op, MoveOperation)
+        assert op.cancel_id == "abc-123"
+        # URL embeds both file_id and destination_directory_id
+        call_args = session.request.call_args
+        assert call_args.args[0] == "POST"
+        assert "/files/100/move/50" in call_args.args[1]
+        # Default conflict=error, no name when not provided
+        assert call_args.kwargs["json"] == {"conflict": "error"}
+
+    def test_move_file_with_name_and_conflict(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200, {"data": {"cancel_id": "x", "valid_until": 1}}
+        )
+        client = make_client(session)
+
+        client.move_file(
+            drive_id=1,
+            file_id=100,
+            destination_directory_id=50,
+            name="renamed.pdf",
+            conflict="rename",
+        )
+
+        body = session.request.call_args.kwargs["json"]
+        assert body == {"conflict": "rename", "name": "renamed.pdf"}
+
+    def test_copy_file(self, file_dict: dict) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200, {"data": file_dict | {"id": 200, "name": "report-copy.pdf"}}
+        )
+        client = make_client(session)
+
+        result = client.copy_file(drive_id=1, file_id=100, destination_directory_id=50)
+
+        assert result.id == 200
+        assert result.name == "report-copy.pdf"
+        call_args = session.request.call_args
+        assert call_args.args[0] == "POST"
+        assert "/files/100/copy/50" in call_args.args[1]
+        # Default conflict=rename
+        assert call_args.kwargs["json"] == {"conflict": "rename"}
+
+    def test_copy_file_with_name(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200, {"data": {"id": 201, "name": "x", "type": "file"}}
+        )
+        client = make_client(session)
+
+        client.copy_file(
+            drive_id=1,
+            file_id=100,
+            destination_directory_id=50,
+            name="renamed.pdf",
+        )
+
+        assert session.request.call_args.kwargs["json"] == {
+            "conflict": "rename",
+            "name": "renamed.pdf",
+        }
+
+    def test_copy_file_directory(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200, {"data": {"id": 300, "name": "Photos", "type": "dir"}}
+        )
+        client = make_client(session)
+
+        result = client.copy_file(drive_id=1, file_id=100, destination_directory_id=50)
+
+        assert result.is_directory is True
+        assert result.name == "Photos"

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterator
@@ -34,7 +33,9 @@ class Drive:
             used_size=data.get("used_size", 0),
             is_locked=data.get("is_locked", False),
             has_operation_in_progress=data.get("has_operation_in_progress", False),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
+            created_at=datetime.fromisoformat(data["created_at"])
+            if data.get("created_at")
+            else None,
         )
 
 
@@ -59,9 +60,35 @@ class File:
             size=data.get("size", 0),
             is_directory=data.get("type") == "dir",
             parent_id=data.get("parent_id"),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
-            modified_at=datetime.fromisoformat(data["modified_at"]) if data.get("modified_at") else None,
+            created_at=datetime.fromisoformat(data["created_at"])
+            if data.get("created_at")
+            else None,
+            modified_at=datetime.fromisoformat(data["modified_at"])
+            if data.get("modified_at")
+            else None,
             mime_type=data.get("mime"),
+        )
+
+
+@dataclass
+class MoveOperation:
+    """Handle to an async kDrive move/rename operation.
+
+    The kDrive move endpoint returns a CancelResource (UUID + valid_until)
+    rather than the moved file. The operation runs in the background; the
+    cancel_id can be polled via /1/async/tasks/{id} or canceled via
+    /2/drive/{drive_id}/cancel.
+    """
+
+    cancel_id: str
+    valid_until: datetime | None
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> MoveOperation:
+        valid = data.get("valid_until")
+        return cls(
+            cancel_id=data.get("cancel_id", ""),
+            valid_until=datetime.fromtimestamp(valid) if valid else None,
         )
 
 
@@ -71,10 +98,12 @@ class KDriveClient:
     def __init__(self, token: str):
         self.token = token
         self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-        })
+        self.session.headers.update(
+            {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            }
+        )
         self._account_id: int | None = None
 
     def _request(
@@ -145,7 +174,9 @@ class KDriveClient:
             if cursor:
                 params["cursor"] = cursor
 
-            body = self._request("GET", f"/3/drive/{drive_id}/files/{directory_id}/files", params=params)
+            body = self._request(
+                "GET", f"/3/drive/{drive_id}/files/{directory_id}/files", params=params
+            )
             files = body.get("data", [])
             for f in files:
                 yield File.from_api(f)
@@ -208,6 +239,53 @@ class KDriveClient:
         """Move a file to trash."""
         self._request("DELETE", f"/2/drive/{drive_id}/files/{file_id}")
 
+    def move_file(
+        self,
+        drive_id: int,
+        file_id: int,
+        destination_directory_id: int,
+        name: str | None = None,
+        conflict: str = "error",
+    ) -> MoveOperation:
+        """Move a file or directory to another directory.
+
+        kDrive move is async — the API returns a CancelResource with a
+        cancel_id that can be polled or canceled. Returns the operation
+        handle; does not block on completion.
+        """
+        json_body: dict[str, Any] = {"conflict": conflict}
+        if name is not None:
+            json_body["name"] = name
+        body = self._request(
+            "POST",
+            f"/3/drive/{drive_id}/files/{file_id}/move/{destination_directory_id}",
+            json_body=json_body,
+        )
+        return MoveOperation.from_api(body.get("data", {}))
+
+    def copy_file(
+        self,
+        drive_id: int,
+        file_id: int,
+        destination_directory_id: int,
+        name: str | None = None,
+        conflict: str = "rename",
+    ) -> File:
+        """Copy a file or directory to another directory.
+
+        kDrive copy is synchronous — the response contains the full
+        metadata of the newly-created file or directory.
+        """
+        json_body: dict[str, Any] = {"conflict": conflict}
+        if name is not None:
+            json_body["name"] = name
+        body = self._request(
+            "POST",
+            f"/3/drive/{drive_id}/files/{file_id}/copy/{destination_directory_id}",
+            json_body=json_body,
+        )
+        return File.from_api(body.get("data", {}))
+
     def resolve_path(self, drive_id: int, path: str) -> int:
         """Walk a path like 'Documents/Photos' and return the final file_id."""
         parts = [p for p in path.strip("/").split("/") if p]
@@ -223,4 +301,5 @@ class KDriveClient:
 
 class KDriveError(Exception):
     """Error raised by kDrive API operations."""
+
     pass
