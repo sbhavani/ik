@@ -21,3 +21,6 @@ env/
 
 # OS
 .DS_Store
+
+# Downloaded API specs (one-off references, not part of project source)
+infomaniak_api_*.json
