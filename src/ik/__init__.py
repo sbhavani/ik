@@ -39,6 +39,17 @@ class Drive:
             else None,
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "size": self.size,
+            "used_size": self.used_size,
+            "is_locked": self.is_locked,
+            "has_operation_in_progress": self.has_operation_in_progress,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
 
 @dataclass
 class File:
@@ -70,6 +81,18 @@ class File:
             mime_type=data.get("mime"),
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "size": self.size,
+            "is_directory": self.is_directory,
+            "parent_id": self.parent_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "modified_at": self.modified_at.isoformat() if self.modified_at else None,
+            "mime_type": self.mime_type,
+        }
+
 
 @dataclass
 class MoveOperation:
@@ -91,6 +114,12 @@ class MoveOperation:
             cancel_id=data.get("cancel_id", ""),
             valid_until=datetime.fromtimestamp(valid) if valid else None,
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cancel_id": self.cancel_id,
+            "valid_until": self.valid_until.isoformat() if self.valid_until else None,
+        }
 
 
 @dataclass
@@ -143,6 +172,27 @@ class ShareLink:
             views=data.get("views", 0),
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "url": self.url,
+            "file_id": self.file_id,
+            "right": self.right,
+            "valid_until": self.valid_until.isoformat() if self.valid_until else None,
+            "capabilities": {
+                "can_download": self.can_download,
+                "can_edit": self.can_edit,
+                "can_see_info": self.can_see_info,
+                "can_comment": self.can_comment,
+                "can_request_access": self.can_request_access,
+                "can_see_stats": self.can_see_stats,
+            },
+            "access_blocked": self.access_blocked,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_by": self.created_by,
+            "views": self.views,
+        }
+
 
 @dataclass
 class SharedFile:
@@ -165,6 +215,14 @@ class SharedFile:
             update_at=datetime.fromtimestamp(ts) if ts else None,
             users=data.get("users", 0),
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "update_at": self.update_at.isoformat() if self.update_at else None,
+            "users": self.users,
+        }
 
 
 _UNSET: Any = object()

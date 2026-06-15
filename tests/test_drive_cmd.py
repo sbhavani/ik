@@ -35,9 +35,10 @@ from ik.driver import (
 
 
 def ns(**kwargs) -> argparse.Namespace:
-    # quiet/yes default to False so existing tests don't need to thread them.
+    # Global flags default so existing tests don't need to thread them.
     kwargs.setdefault("quiet", False)
     kwargs.setdefault("yes", False)
+    kwargs.setdefault("output", "text")
     return argparse.Namespace(**kwargs)
 
 
@@ -133,6 +134,32 @@ class TestCmdLs:
         client.list_drives.assert_called_once()
         client.list_files.assert_called_once_with(99, 1)
 
+    def test_json_output(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_files.return_value = iter(
+            [make_file(id=10, name="a.txt"), make_file(id=11, name="b.txt")]
+        )
+        out = io.StringIO()
+
+        cmd_ls(ns(drive=1, path=None, show_id=False, output="json"), client, out=out)
+
+        payload = json.loads(out.getvalue())
+        assert isinstance(payload, list)
+        assert [f["name"] for f in payload] == ["a.txt", "b.txt"]
+        assert payload[0]["id"] == 10
+
+    def test_text_output_default(self, capsys: pytest.CaptureFixture) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_files.return_value = iter([make_file(id=10, name="a.txt")])
+        out = io.StringIO()
+
+        cmd_ls(ns(drive=1, path=None, show_id=False, output="text"), client, out=out)
+
+        # Text output goes through print() → stdout, not via `out`
+        assert "a.txt" in capsys.readouterr().out
+        # No JSON payload on the explicit `out` stream
+        assert out.getvalue() == ""
+
 
 # ── cmd_tree ──────────────────────────────────────────────────────────
 
@@ -175,6 +202,31 @@ class TestCmdTree:
         assert "sub" in text
         assert "leaf.txt" in text
 
+    def test_json_output_recursive(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_files.side_effect = [
+            iter([make_file(id=10, name="sub", is_directory=True)]),
+            iter([make_file(id=11, name="leaf.txt")]),
+        ]
+        out = io.StringIO()
+
+        cmd_tree(ns(drive=1, path=None, output="json"), client, out=out)
+
+        payload = json.loads(out.getvalue())
+        assert payload == {
+            "name": ".",
+            "is_directory": True,
+            "children": [
+                {
+                    "name": "sub",
+                    "is_directory": True,
+                    "children": [
+                        {"name": "leaf.txt", "is_directory": False, "children": None},
+                    ],
+                },
+            ],
+        }
+
 
 # ── cmd_mkdir ─────────────────────────────────────────────────────────
 
@@ -208,6 +260,18 @@ class TestCmdMkdir:
         cmd_mkdir(ns(drive=1, path="new/"), client, out=io.StringIO())
 
         client.create_directory.assert_called_once_with(1, 1, "new")
+
+    def test_json_output(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.create_directory.return_value = make_file(id=200, name="new", is_directory=True)
+        out = io.StringIO()
+
+        cmd_mkdir(ns(drive=1, path="new", output="json"), client, out=out)
+
+        payload = json.loads(out.getvalue())
+        assert payload["name"] == "new"
+        assert payload["id"] == 200
+        assert payload["is_directory"] is True
 
 
 # ── cmd_upload ────────────────────────────────────────────────────────
@@ -263,6 +327,21 @@ class TestCmdUpload:
         text = out.getvalue()
         assert "Uploading" not in text
         assert "Uploaded: data.bin (id: 300)" in text
+
+    def test_json_output(self, tmp_path) -> None:
+        local = tmp_path / "data.bin"
+        local.write_bytes(b"hello")
+        client = Mock(spec=KDriveClient)
+        client.upload_file.return_value = make_file(id=300, name="data.bin")
+        out = io.StringIO()
+
+        cmd_upload(ns(drive=1, local=str(local), dir=7, output="json"), client, out=out)
+
+        payload = json.loads(out.getvalue())
+        assert payload["name"] == "data.bin"
+        assert payload["id"] == 300
+        # Status line suppressed
+        assert "Uploading" not in out.getvalue()
 
 
 # ── cmd_download ──────────────────────────────────────────────────────
@@ -337,6 +416,25 @@ class TestCmdDownload:
         assert "Downloading data.bin" in text
         assert "Saved:" in text
 
+    def test_json_output(self, tmp_path) -> None:
+        client = Mock(spec=KDriveClient)
+        client.get_file.return_value = make_file(id=100, name="report.pdf", size=6)
+        resp = Mock()
+        resp.headers = {"Content-Length": "6"}
+        resp.iter_content.return_value = iter([b"abc", b"def"])
+        client.download_file.return_value = resp
+        out = io.StringIO()
+        dest = tmp_path / "out.pdf"
+
+        cmd_download(
+            ns(drive=1, file="100", local=str(dest), output="json"),
+            client,
+            out=out,
+        )
+
+        payload = json.loads(out.getvalue())
+        assert payload == {"path": str(dest), "name": "report.pdf", "size": 6}
+
 
 # ── cmd_search ────────────────────────────────────────────────────────
 
@@ -368,6 +466,21 @@ class TestCmdSearch:
 
         client.search.assert_called_once_with(1, "needle")
 
+    def test_json_output(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.search.return_value = iter([make_file(id=10, name="invoice.pdf")])
+        out = io.StringIO()
+
+        cmd_search(
+            ns(drive=1, query="invoice", show_id=False, output="json"),
+            client,
+            out=out,
+        )
+
+        payload = json.loads(out.getvalue())
+        assert isinstance(payload, list)
+        assert payload[0]["name"] == "invoice.pdf"
+
 
 # ── cmd_rm ────────────────────────────────────────────────────────────
 
@@ -393,6 +506,14 @@ class TestCmdRm:
         client.resolve_path.assert_called_once_with(1, "Docs/old.txt")
         client.trash_file.assert_called_once_with(1, 456)
         assert out.getvalue() == "Trashed: Docs/old.txt\n"
+
+    def test_json_output(self) -> None:
+        client = Mock(spec=KDriveClient)
+        out = io.StringIO()
+
+        cmd_rm(ns(drive=1, path="123", yes=True, output="json"), client, out=out)
+
+        assert json.loads(out.getvalue()) == {"trashed": "123"}
 
     def test_yes_skips_prompt(self, monkeypatch) -> None:
         # --yes means no prompt, no input() call, no isatty() check.
@@ -650,6 +771,31 @@ class TestCmdMv:
 
         assert "async" in out.getvalue().lower()
 
+    def test_json_output(self) -> None:
+        from datetime import datetime
+
+        from ik import MoveOperation
+
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.return_value = 50
+        client.move_file.return_value = MoveOperation(
+            cancel_id="op-7", valid_until=datetime(2024, 6, 1, 12, 0, 0)
+        )
+        out = io.StringIO()
+
+        cmd_mv(
+            ns(drive=1, src="123", dst="Archive", name=None, output="json"),
+            client,
+            out=out,
+        )
+
+        payload = json.loads(out.getvalue())
+        assert payload == {
+            "cancel_id": "op-7",
+            "valid_until": "2024-06-01T12:00:00",
+            "async": True,
+        }
+
 
 # ── cmd_cp ────────────────────────────────────────────────────────────
 
@@ -693,6 +839,30 @@ class TestCmdCp:
 
         assert client.copy_file.call_args.kwargs["name"] == "renamed.pdf"
         assert out.getvalue() == "Copied: renamed.pdf (id: 202)\n"
+
+    def test_json_output(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.return_value = 50
+        client.copy_file.return_value = make_file(id=200, name="copy.pdf")
+        out = io.StringIO()
+
+        cmd_cp(
+            ns(drive=1, src="123", dst="Archive", name=None, output="json"),
+            client,
+            out=out,
+        )
+
+        payload = json.loads(out.getvalue())
+        assert payload == {
+            "id": 200,
+            "name": "copy.pdf",
+            "size": 100,
+            "is_directory": False,
+            "parent_id": 1,
+            "created_at": "2024-01-01T00:00:00",
+            "modified_at": "2024-01-02T00:00:00",
+            "mime_type": "text/plain",
+        }
 
 
 # ── Threshold branching in cmd_upload ────────────────────────────────
@@ -1029,3 +1199,45 @@ class TestCmdShare:
         assert "users: 3" in text
         assert "11" in text
         assert "b.jpg" in text
+
+    def test_create_json_output(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.create_share_link.return_value = self._link(url="https://kdrive.example/s/abc")
+        out = io.StringIO()
+
+        cmd_share_create(
+            ns(
+                drive=1,
+                file="100",
+                right="public",
+                password=None,
+                valid_until=None,
+                can_download=True,
+                can_edit=False,
+                can_see_info=False,
+                can_comment=False,
+                can_request_access=False,
+                can_see_stats=False,
+                output="json",
+            ),
+            client,
+            out=out,
+        )
+
+        assert json.loads(out.getvalue()) == {"url": "https://kdrive.example/s/abc"}
+
+    def test_ls_json_output(self) -> None:
+        from datetime import datetime
+
+        client = Mock(spec=KDriveClient)
+        client.list_shared_files.return_value = iter(
+            [SharedFile(id=10, name="a.pdf", update_at=datetime(2024, 1, 1), users=3)]
+        )
+        out = io.StringIO()
+
+        cmd_share_ls(ns(drive=1, output="json"), client, out=out)
+
+        payload = json.loads(out.getvalue())
+        assert payload == [
+            {"id": 10, "name": "a.pdf", "update_at": "2024-01-01T00:00:00", "users": 3}
+        ]

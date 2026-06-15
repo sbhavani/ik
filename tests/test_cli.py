@@ -207,3 +207,39 @@ class TestGlobalFlags:
                         captured = cd.call_args.args[0]
                         assert captured.quiet is True
                         assert captured.yes is True
+
+    def test_output_in_top_position(self) -> None:
+        import sys
+        from unittest.mock import patch
+
+        from ik.cli import main as _main
+
+        with patch.object(sys, "argv", ["ik", "--output", "json", "drives"]):
+            with patch("ik.cli._resolve_token", return_value="t"):
+                with patch("ik.cli.KDriveClient") as KC:
+                    KC.return_value.list_drives.return_value = []
+                    with patch("ik.cli.cmd_drives") as cd:
+                        try:
+                            _main()
+                        except SystemExit:
+                            pass
+                        captured = cd.call_args.args[0]
+                        assert captured.output == "json"
+
+    def test_output_in_subcommand_position(self) -> None:
+        import sys
+        from unittest.mock import patch
+
+        from ik.cli import main as _main
+
+        with patch.object(sys, "argv", ["ik", "drives", "--output", "json"]):
+            with patch("ik.cli._resolve_token", return_value="t"):
+                with patch("ik.cli.KDriveClient") as KC:
+                    KC.return_value.list_drives.return_value = []
+                    with patch("ik.cli.cmd_drives") as cd:
+                        try:
+                            _main()
+                        except SystemExit:
+                            pass
+                        captured = cd.call_args.args[0]
+                        assert captured.output == "json"

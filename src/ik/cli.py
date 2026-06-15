@@ -5,9 +5,49 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import Any
 
 from . import KDriveClient, KDriveError
 from .driver import add_drive_commands
+
+
+def _make_globals(suppress: bool) -> argparse.ArgumentParser:
+    """Build a parent parser for the global flags.
+
+    When `suppress=False`, the parser is for the top-level — defaults are
+    concrete (`output="text"`, `token=None`, `quiet=False`, `yes=False`)
+    so the namespace always has the keys.
+
+    When `suppress=True`, the parser is for subcommands — every default
+    is `argparse.SUPPRESS` so the subparser's namespace merge doesn't
+    clobber a value set by the top-level parser.
+    """
+    p = argparse.ArgumentParser(add_help=False)
+    default: Any = argparse.SUPPRESS if suppress else None
+    output_default: Any = argparse.SUPPRESS if suppress else "text"
+    bool_default: Any = argparse.SUPPRESS if suppress else False
+
+    p.add_argument("--token", help="API token override", default=default)
+    p.add_argument(
+        "--output",
+        choices=["text", "json"],
+        default=output_default,
+        help="Output format (default: text)",
+    )
+    p.add_argument(
+        "--quiet", action="store_true", default=bool_default, help="Suppress non-essential output"
+    )
+    p.add_argument(
+        "--yes",
+        action="store_true",
+        default=bool_default,
+        help="Skip confirmation prompts (for scripts)",
+    )
+    return p
+
+
+GLOBAL = _make_globals(suppress=False)
+GLOBAL_SUB = _make_globals(suppress=True)
 
 
 def _resolve_token(args: argparse.Namespace) -> str:
@@ -114,27 +154,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="ik",
         description="Infomaniak CLI - AWS CLI style for Infomaniak Cloud",
-    )
-    parser.add_argument("--token", help="API token")
-    parser.add_argument(
-        "--quiet", action="store_true", help="Suppress non-essential output (status lines)"
-    )
-    parser.add_argument(
-        "--yes", action="store_true", help="Skip confirmation prompts (for scripts)"
+        parents=[GLOBAL],
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     # configure
-    sub.add_parser("configure", help="Configure credentials")
+    sub.add_parser("configure", help="Configure credentials", parents=[GLOBAL_SUB])
 
     # whoami
-    sub.add_parser("whoami", help="Show current user")
+    sub.add_parser("whoami", help="Show current user", parents=[GLOBAL_SUB])
 
     # drives
-    sub.add_parser("drives", help="List all kDrives")
+    sub.add_parser("drives", help="List all kDrives", parents=[GLOBAL_SUB])
 
     # drive subcommands
-    add_drive_commands(sub)
+    add_drive_commands(sub, GLOBAL_SUB)
 
     args = parser.parse_args()
 

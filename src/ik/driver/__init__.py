@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Callable
-from typing import TextIO
+from typing import Any, TextIO
 
 from .. import File, KDriveClient, KDriveError, _UNSET
+
+
+def _is_json(args: argparse.Namespace) -> bool:
+    """True when --output json was passed. Defaults to False for callers
+    that don't thread the global flags (e.g. legacy test paths)."""
+    return getattr(args, "output", "text") == "json"
 
 
 CHUNKED_THRESHOLD = 16 * 1024 * 1024  # 16 MB
@@ -71,6 +78,10 @@ def cmd_ls(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.std
     directory_id = _resolve_directory(client, drive_id, args.path)
 
     files = list(client.list_files(drive_id, directory_id))
+    if _is_json(args):
+        out.write(json.dumps([f.to_dict() for f in files], indent=2) + "\n")
+        return
+
     if not files:
         out.write("(empty)\n")
         return
@@ -83,6 +94,31 @@ def cmd_tree(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.s
     """Display directory tree."""
     drive_id = args.drive or _get_default_drive(client)
     root_id = _resolve_directory(client, drive_id, args.path)
+
+    if _is_json(args):
+
+        def entry(f: File) -> dict[str, Any]:
+            if f.is_directory:
+                children = list(client.list_files(drive_id, f.id))
+                return {
+                    "name": f.name,
+                    "is_directory": True,
+                    "children": [entry(child) for child in children],
+                }
+            return {
+                "name": f.name,
+                "is_directory": False,
+                "children": None,
+            }
+
+        root_files = list(client.list_files(drive_id, root_id))
+        root = {
+            "name": ".",
+            "is_directory": True,
+            "children": [entry(f) for f in root_files],
+        }
+        out.write(json.dumps(root, indent=2) + "\n")
+        return
 
     def walk(directory_id: int, prefix: str = "", is_last: bool = True) -> None:
         files = list(client.list_files(drive_id, directory_id))
@@ -117,6 +153,9 @@ def cmd_mkdir(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.
         dir_name = path
 
     result = client.create_directory(drive_id, parent_id, dir_name)
+    if _is_json(args):
+        out.write(json.dumps(result.to_dict(), indent=2) + "\n")
+        return
     out.write(f"Created: {result.name} (id: {result.id})\n")
 
 
@@ -136,17 +175,20 @@ def cmd_upload(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys
 
     if total < CHUNKED_THRESHOLD:
         data = local_path.read_bytes()
-        if not getattr(args, "quiet", False):
+        if not getattr(args, "quiet", False) and not _is_json(args):
             out.write(f"Uploading {local_path.name} ({total / 1024:.1f}KB)...\n")
         result = client.upload_file(drive_id, directory_id, local_path.name, data)
     else:
-        if not getattr(args, "quiet", False):
+        if not getattr(args, "quiet", False) and not _is_json(args):
             out.write(f"Uploading {local_path.name} ({total / 1024 / 1024:.1f}MB) — chunked...\n")
         result = client.upload_file_streaming(
             drive_id, directory_id, local_path.name, local_path, on_progress=progress
         )
         sys.stderr.write("\n")
 
+    if _is_json(args):
+        out.write(json.dumps(result.to_dict(), indent=2) + "\n")
+        return
     out.write(f"Uploaded: {result.name} (id: {result.id})\n")
 
 
@@ -162,7 +204,8 @@ def cmd_download(args: argparse.Namespace, client: KDriveClient, out: TextIO = s
     if local_path.is_dir():
         local_path = local_path / info.name
 
-    out.write(f"Downloading {info.name}...\n" if not getattr(args, "quiet", False) else "")
+    if not getattr(args, "quiet", False) and not _is_json(args):
+        out.write(f"Downloading {info.name}...\n")
     resp = client.download_file(drive_id, file_id)
     total = int(resp.headers.get("Content-Length", 0)) if resp.headers else 0
     progress = _make_progress(info.name, total, sys.stderr, sys.stderr.isatty())
@@ -176,6 +219,19 @@ def cmd_download(args: argparse.Namespace, client: KDriveClient, out: TextIO = s
     if total > 0:
         sys.stderr.write("\n")
 
+    if _is_json(args):
+        out.write(
+            json.dumps(
+                {
+                    "path": str(local_path),
+                    "name": info.name,
+                    "size": local_path.stat().st_size,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return
     out.write(f"Saved: {local_path} ({local_path.stat().st_size / 1024:.1f}KB)\n")
 
 
@@ -183,6 +239,10 @@ def cmd_search(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys
     """Search for files by name."""
     drive_id = args.drive or _get_default_drive(client)
     results = list(client.search(drive_id, args.query))
+
+    if _is_json(args):
+        out.write(json.dumps([f.to_dict() for f in results], indent=2) + "\n")
+        return
 
     if not results:
         out.write("No results.\n")
@@ -210,6 +270,9 @@ def cmd_rm(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.std
             raise KDriveError("Aborted")
 
     client.trash_file(drive_id, file_id)
+    if _is_json(args):
+        out.write(json.dumps({"trashed": path}, indent=2) + "\n")
+        return
     out.write(f"Trashed: {path}\n")
 
 
@@ -251,6 +314,19 @@ def cmd_mv(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.std
     dst_id = _resolve_directory(client, drive_id, args.dst)
 
     op = client.move_file(drive_id, src_id, dst_id, name=args.name)
+    if _is_json(args):
+        out.write(
+            json.dumps(
+                {
+                    "cancel_id": op.cancel_id,
+                    "valid_until": op.valid_until.isoformat() if op.valid_until else None,
+                    "async": True,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return
     out.write(f"Move queued: cancel_id={op.cancel_id}\n")
     if not getattr(args, "quiet", False):
         out.write("(Move is async on the kDrive side; the operation runs in the background.)\n")
@@ -263,6 +339,9 @@ def cmd_cp(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.std
     dst_id = _resolve_directory(client, drive_id, args.dst)
 
     result = client.copy_file(drive_id, src_id, dst_id, name=args.name)
+    if _is_json(args):
+        out.write(json.dumps(result.to_dict(), indent=2) + "\n")
+        return
     out.write(f"Copied: {result.name} (id: {result.id})\n")
 
 
@@ -285,6 +364,9 @@ def cmd_share_create(
         can_request_access=args.can_request_access,
         can_see_stats=args.can_see_stats,
     )
+    if _is_json(args):
+        out.write(json.dumps({"url": link.url}, indent=2) + "\n")
+        return
     out.write(f"{link.url}\n")
 
 
@@ -337,6 +419,9 @@ def cmd_share_update(
     }
     kwargs = {k: v for k, v in changed.items() if v is not _UNSET}
     link = client.update_share_link(drive_id, file_id, **kwargs)
+    if _is_json(args):
+        out.write(json.dumps({"url": link.url}, indent=2) + "\n")
+        return
     out.write(f"Updated: {link.url}\n")
 
 
@@ -347,6 +432,9 @@ def cmd_share_remove(
     drive_id = args.drive or _get_default_drive(client)
     file_id = _resolve_source_id(client, drive_id, args.file)
     client.delete_share_link(drive_id, file_id)
+    if _is_json(args):
+        out.write(json.dumps({"removed": args.file}, indent=2) + "\n")
+        return
     out.write(f"Removed share link for {args.file}\n")
 
 
@@ -354,6 +442,9 @@ def cmd_share_ls(args: argparse.Namespace, client: KDriveClient, out: TextIO = s
     """List files that have a share link."""
     drive_id = args.drive or _get_default_drive(client)
     files = list(client.list_shared_files(drive_id))
+    if _is_json(args):
+        out.write(json.dumps([sf.to_dict() for sf in files], indent=2) + "\n")
+        return
     if not files:
         out.write("(no shared files)\n")
         return
@@ -395,65 +486,67 @@ def _resolve_source_id(client: KDriveClient, drive_id: int, src: str) -> int:
     return client.resolve_path(drive_id, src)
 
 
-def add_drive_commands(parser: argparse.ArgumentParser) -> None:
+def add_drive_commands(
+    parser: argparse.ArgumentParser, global_flags: argparse.ArgumentParser
+) -> None:
     """Add kDrive subcommands to the parser."""
-    drive_parser = parser.add_parser("drive", help="kDrive commands")
+    drive_parser = parser.add_parser("drive", help="kDrive commands", parents=[global_flags])
     drive_sub = drive_parser.add_subparsers(dest="drive_cmd", required=True)
 
     # drive ls
-    ls = drive_sub.add_parser("ls", help="List directory contents")
+    ls = drive_sub.add_parser("ls", help="List directory contents", parents=[global_flags])
     ls.add_argument("path", nargs="?", default=None)
     ls.add_argument("--drive", type=int, help="Drive ID")
     ls.add_argument("--id", dest="show_id", action="store_true", help="Show file IDs")
     ls.set_defaults(func=cmd_ls)
 
     # drive tree
-    tree = drive_sub.add_parser("tree", help="Display directory tree")
+    tree = drive_sub.add_parser("tree", help="Display directory tree", parents=[global_flags])
     tree.add_argument("path", nargs="?", default=None)
     tree.add_argument("--drive", type=int, help="Drive ID")
     tree.set_defaults(func=cmd_tree)
 
     # drive mkdir
-    mkdir = drive_sub.add_parser("mkdir", help="Create a directory")
+    mkdir = drive_sub.add_parser("mkdir", help="Create a directory", parents=[global_flags])
     mkdir.add_argument("path", help="Directory path")
     mkdir.add_argument("--drive", type=int, help="Drive ID")
     mkdir.set_defaults(func=cmd_mkdir)
 
     # drive upload
-    upload = drive_sub.add_parser("upload", help="Upload a file")
+    upload = drive_sub.add_parser("upload", help="Upload a file", parents=[global_flags])
     upload.add_argument("local", help="Local file path")
     upload.add_argument("--drive", type=int, help="Drive ID")
     upload.add_argument("--dir", type=int, default=1, help="Directory ID")
     upload.set_defaults(func=cmd_upload)
 
     # drive download
-    download = drive_sub.add_parser("download", help="Download a file")
+    download = drive_sub.add_parser("download", help="Download a file", parents=[global_flags])
     download.add_argument("file", help="File ID or path")
     download.add_argument("--local", help="Local destination path")
     download.add_argument("--drive", type=int, help="Drive ID")
     download.set_defaults(func=cmd_download)
 
     # drive search
-    search = drive_sub.add_parser("search", help="Search for files")
+    search = drive_sub.add_parser("search", help="Search for files", parents=[global_flags])
     search.add_argument("query", help="Search query")
     search.add_argument("--drive", type=int, help="Drive ID")
     search.add_argument("--id", dest="show_id", action="store_true", help="Show file IDs")
     search.set_defaults(func=cmd_search)
 
     # drive rm
-    rm = drive_sub.add_parser("rm", help="Move file to trash")
+    rm = drive_sub.add_parser("rm", help="Move file to trash", parents=[global_flags])
     rm.add_argument("path", help="File ID or path")
     rm.add_argument("--drive", type=int, help="Drive ID")
     rm.set_defaults(func=cmd_rm)
 
     # drive info
-    info = drive_sub.add_parser("info", help="Get file details")
+    info = drive_sub.add_parser("info", help="Get file details", parents=[global_flags])
     info.add_argument("path", help="File ID or path")
     info.add_argument("--drive", type=int, help="Drive ID")
     info.set_defaults(func=cmd_info)
 
     # drive mv
-    mv = drive_sub.add_parser("mv", help="Move a file or directory")
+    mv = drive_sub.add_parser("mv", help="Move a file or directory", parents=[global_flags])
     mv.add_argument("src", help="Source file/dir (ID or path)")
     mv.add_argument("dst", help="Destination directory (ID or path)")
     mv.add_argument("--name", help="New name for rename-and-move")
@@ -461,7 +554,7 @@ def add_drive_commands(parser: argparse.ArgumentParser) -> None:
     mv.set_defaults(func=cmd_mv)
 
     # drive cp
-    cp = drive_sub.add_parser("cp", help="Copy a file or directory")
+    cp = drive_sub.add_parser("cp", help="Copy a file or directory", parents=[global_flags])
     cp.add_argument("src", help="Source file/dir (ID or path)")
     cp.add_argument("dst", help="Destination directory (ID or path)")
     cp.add_argument("--name", help="New name for rename-and-copy")
@@ -469,11 +562,13 @@ def add_drive_commands(parser: argparse.ArgumentParser) -> None:
     cp.set_defaults(func=cmd_cp)
 
     # drive share
-    share = drive_sub.add_parser("share", help="Manage public share links")
+    share = drive_sub.add_parser("share", help="Manage public share links", parents=[global_flags])
     share_sub = share.add_subparsers(dest="share_cmd", required=True)
 
     # share create
-    share_create = share_sub.add_parser("create", help="Create a share link")
+    share_create = share_sub.add_parser(
+        "create", help="Create a share link", parents=[global_flags]
+    )
     share_create.add_argument("file", help="File ID or path")
     share_create.add_argument(
         "--right", choices=["public", "password", "inherit"], default="public"
@@ -497,13 +592,15 @@ def add_drive_commands(parser: argparse.ArgumentParser) -> None:
     share_create.set_defaults(func=cmd_share_create)
 
     # share get
-    share_get = share_sub.add_parser("get", help="Get share-link settings")
+    share_get = share_sub.add_parser("get", help="Get share-link settings", parents=[global_flags])
     share_get.add_argument("file", help="File ID or path")
     share_get.add_argument("--drive", type=int, help="Drive ID")
     share_get.set_defaults(func=cmd_share_get)
 
     # share update
-    share_update = share_sub.add_parser("update", help="Update a share link")
+    share_update = share_sub.add_parser(
+        "update", help="Update a share link", parents=[global_flags]
+    )
     share_update.add_argument("file", help="File ID or path")
     share_update.add_argument("--right", choices=["public", "password", "inherit"], default=_UNSET)
     share_update.add_argument("--password", default=_UNSET)
@@ -524,12 +621,16 @@ def add_drive_commands(parser: argparse.ArgumentParser) -> None:
     share_update.set_defaults(func=cmd_share_update)
 
     # share remove
-    share_remove = share_sub.add_parser("remove", help="Remove a share link")
+    share_remove = share_sub.add_parser(
+        "remove", help="Remove a share link", parents=[global_flags]
+    )
     share_remove.add_argument("file", help="File ID or path")
     share_remove.add_argument("--drive", type=int, help="Drive ID")
     share_remove.set_defaults(func=cmd_share_remove)
 
     # share ls
-    share_ls = share_sub.add_parser("ls", help="List files with share links")
+    share_ls = share_sub.add_parser(
+        "ls", help="List files with share links", parents=[global_flags]
+    )
     share_ls.add_argument("--drive", type=int, help="Drive ID")
     share_ls.set_defaults(func=cmd_share_ls)
