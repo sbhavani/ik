@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from ik import Drive, File, MoveOperation, ShareLink, SharedFile
+from ik import Activity, Drive, File, MoveOperation, ShareLink, SharedFile
 from ik.driver import _format_size
 
 
@@ -230,3 +230,41 @@ class TestSharedFileToDict:
     def test_none_update_at(self) -> None:
         sf = SharedFile(id=1, name="x", update_at=None, users=0)
         assert sf.to_dict()["update_at"] is None
+
+
+class TestActivityToDict:
+    def test_serializes_all_fields(self) -> None:
+        a = Activity(
+            id=42,
+            created_at=datetime(2024, 1, 2, 3, 4, 5),
+            action="file_mv",
+            new_path="/Photos/2024/img.jpg",
+            old_path="/Photos/img.jpg",
+            file_id=999,
+            user_id=7,
+        )
+        d = a.to_dict()
+        assert d == {
+            "id": 42,
+            "created_at": "2024-01-02T03:04:05",
+            "action": "file_mv",
+            "new_path": "/Photos/2024/img.jpg",
+            "old_path": "/Photos/img.jpg",
+            "file_id": 999,
+            "user_id": 7,
+        }
+
+    def test_none_fields(self) -> None:
+        a = Activity(
+            id=1,
+            created_at=None,
+            action="",
+            new_path="",
+            old_path="",
+            file_id=None,
+            user_id=None,
+        )
+        d = a.to_dict()
+        assert d["created_at"] is None
+        assert d["file_id"] is None
+        assert d["user_id"] is None

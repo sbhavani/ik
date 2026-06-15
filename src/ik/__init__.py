@@ -225,6 +225,48 @@ class SharedFile:
         }
 
 
+@dataclass
+class Activity:
+    """A drive activity log entry (file move, share, delete, etc.).
+
+    Returned by the drive activity endpoint. `created_at` is a Unix
+    timestamp; `old_path`/`new_path` describe path transitions for
+    move/rename actions (one may be empty for non-move actions).
+    """
+
+    id: int
+    created_at: datetime | None
+    action: str
+    new_path: str
+    old_path: str
+    file_id: int | None
+    user_id: int | None
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> Activity:
+        ts = data.get("created_at")
+        return cls(
+            id=data.get("id", 0),
+            created_at=datetime.fromtimestamp(ts) if ts else None,
+            action=data.get("action", ""),
+            new_path=data.get("new_path", ""),
+            old_path=data.get("old_path", ""),
+            file_id=data.get("file_id"),
+            user_id=data.get("user_id"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "action": self.action,
+            "new_path": self.new_path,
+            "old_path": self.old_path,
+            "file_id": self.file_id,
+            "user_id": self.user_id,
+        }
+
+
 _UNSET: Any = object()
 """Sentinel for distinguishing 'argument not passed' from 'argument is None'.
 
@@ -528,6 +570,53 @@ class KDriveClient:
     def empty_trash(self, drive_id: int) -> None:
         """Permanently delete everything in the trash."""
         self._request("DELETE", f"/2/drive/{drive_id}/trash")
+
+    # ── Activity Log ───────────────────────────────────────────────────
+
+    def list_activity(
+        self,
+        drive_id: int,
+        *,
+        lang: str = "en",
+        from_: int | None = None,
+        until: int | None = None,
+        users: list[int] | None = None,
+        actions: list[str] | None = None,
+        files: list[int] | None = None,
+        limit: int = 10,
+    ) -> Iterator[Activity]:
+        """List recent drive activity (file operations, share changes, etc.).
+
+        `from_`/`until` are Unix timestamps. `users`, `actions`, and
+        `files` are repeatable filters; pass lists to combine them.
+        Pagination follows `has_more`/`cursor` like other list endpoints.
+        """
+        cursor = None
+        while True:
+            params: dict[str, Any] = {
+                "lang": lang,
+                "limit": limit,
+                "order_for[created_at]": "desc",
+            }
+            if from_ is not None:
+                params["from"] = from_
+            if until is not None:
+                params["until"] = until
+            if users:
+                params["users"] = users
+            if actions:
+                params["actions"] = actions
+            if files:
+                params["files"] = files
+            if cursor:
+                params["cursor"] = cursor
+
+            body = self._request("GET", f"/2/drive/{drive_id}/activities", params=params)
+            for entry in body.get("data", []):
+                yield Activity.from_api(entry)
+            if not body.get("has_more", False):
+                break
+            cursor = body.get("cursor")
 
     # ── Share Link Operations ──────────────────────────────────────────
 

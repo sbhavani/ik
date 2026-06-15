@@ -407,6 +407,81 @@ class TestTrash:
         assert session.request.call_args.args[1] == "https://api.infomaniak.com/2/drive/1/trash"
 
 
+class TestActivity:
+    def test_list_activity_single_page(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200,
+            {
+                "data": [
+                    {
+                        "id": 1,
+                        "created_at": 1717200000,
+                        "action": "file_create",
+                        "new_path": "/Photos/a.jpg",
+                        "old_path": "",
+                        "file_id": 100,
+                        "user_id": 7,
+                    }
+                ],
+                "has_more": False,
+            },
+        )
+        client = make_client(session)
+
+        entries = list(client.list_activity(1))
+
+        assert len(entries) == 1
+        assert entries[0].action == "file_create"
+        assert entries[0].new_path == "/Photos/a.jpg"
+        # GET verb, lang + limit + order required
+        params = session.request.call_args.kwargs["params"]
+        assert params["lang"] == "en"
+        assert params["limit"] == 10
+
+    def test_list_activity_filters(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(200, {"data": [], "has_more": False})
+        client = make_client(session)
+
+        list(
+            client.list_activity(
+                1,
+                from_=1700000000,
+                until=1800000000,
+                users=[7, 8],
+                actions=["file_create", "file_mv"],
+                files=[100, 200],
+                limit=50,
+            )
+        )
+
+        params = session.request.call_args.kwargs["params"]
+        assert params["from"] == 1700000000
+        assert params["until"] == 1800000000
+        assert params["users"] == [7, 8]
+        assert params["actions"] == ["file_create", "file_mv"]
+        assert params["files"] == [100, 200]
+        assert params["limit"] == 50
+
+    def test_list_activity_follows_cursor(self) -> None:
+        session = Mock(spec=requests.Session)
+        page1 = {
+            "data": [{"id": 1, "created_at": 1, "action": "x"}],
+            "has_more": True,
+            "cursor": "C1",
+        }
+        page2 = {"data": [], "has_more": False}
+        session.request.side_effect = [make_response(200, page1), make_response(200, page2)]
+        client = make_client(session)
+
+        entries = list(client.list_activity(1))
+
+        assert len(entries) == 1
+        assert session.request.call_count == 2
+        assert session.request.call_args_list[1].kwargs["params"]["cursor"] == "C1"
+
+
 class TestUploadStreaming:
     def test_streaming_small_file_single_chunk(self, tmp_path, file_dict: dict) -> None:
         f = tmp_path / "small.bin"

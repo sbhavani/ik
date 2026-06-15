@@ -523,6 +523,42 @@ def cmd_trash_restore(
         out.write(f"Restore queued: cancel_id={op.cancel_id}\n")
 
 
+def cmd_activity(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
+    """List recent drive activity (file ops, share changes, etc.)."""
+    drive_id = args.drive or _get_default_drive(client)
+
+    file_ids: list[int] = []
+    for f in args.files or []:
+        file_ids.append(_resolve_source_id(client, drive_id, f))
+
+    entries = list(
+        client.list_activity(
+            drive_id,
+            from_=args.since,
+            until=args.until,
+            users=args.users,
+            actions=args.actions,
+            files=file_ids or None,
+            limit=args.limit,
+        )
+    )
+
+    if _is_json(args):
+        out.write(json.dumps([a.to_dict() for a in entries], indent=2) + "\n")
+        return
+    if not entries:
+        out.write("(no activity)\n")
+        return
+
+    for a in entries:
+        ts = a.created_at.isoformat(timespec="seconds") if a.created_at else "?"
+        user = f"user={a.user_id}" if a.user_id is not None else "system"
+        path = a.new_path or a.old_path
+        if a.old_path and a.new_path and a.old_path != a.new_path:
+            path = f"{a.old_path} -> {a.new_path}"
+        out.write(f"  {ts}  {a.action:<12}  {user}  {path}\n")
+
+
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
@@ -730,3 +766,28 @@ def add_drive_commands(
     trash_restore.add_argument("--to", help="Destination directory (ID or path); defaults to root")
     trash_restore.add_argument("--drive", type=int, help="Drive ID")
     trash_restore.set_defaults(func=cmd_trash_restore)
+
+    # drive activity
+    activity = drive_sub.add_parser(
+        "activity", help="List drive activity log", parents=[global_flags]
+    )
+    activity.add_argument(
+        "--user", dest="users", action="append", type=int, help="Filter by user ID (repeatable)"
+    )
+    activity.add_argument(
+        "--action",
+        dest="actions",
+        action="append",
+        help="Filter by action type (repeatable)",
+    )
+    activity.add_argument(
+        "--file",
+        dest="files",
+        action="append",
+        help="Filter by file ID or path (repeatable)",
+    )
+    activity.add_argument("--since", type=int, help="Start timestamp (Unix seconds)")
+    activity.add_argument("--until", type=int, help="End timestamp (Unix seconds)")
+    activity.add_argument("--limit", type=int, default=10, help="Page size (default: 10)")
+    activity.add_argument("--drive", type=int, help="Drive ID")
+    activity.set_defaults(func=cmd_activity)

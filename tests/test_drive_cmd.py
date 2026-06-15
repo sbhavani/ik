@@ -10,12 +10,13 @@ from unittest.mock import Mock
 
 import pytest
 
-from ik import Drive, File, KDriveClient, KDriveError, ShareLink, SharedFile
+from ik import Activity, Drive, File, KDriveClient, KDriveError, ShareLink, SharedFile
 from ik.driver import (
     _get_default_drive,
     _make_progress,
     _resolve_directory,
     _resolve_source_id,
+    cmd_activity,
     cmd_cp,
     cmd_download,
     cmd_info,
@@ -1396,3 +1397,155 @@ class TestCmdTrashRestore:
             "valid_until": "2024-06-01T12:00:00",
             "async": True,
         }
+
+
+# ── cmd_activity ──────────────────────────────────────────────────────
+
+
+def make_activity(
+    *,
+    id: int = 1,
+    action: str = "file_create",
+    new_path: str = "/a.txt",
+    old_path: str = "",
+    file_id: int | None = 100,
+    user_id: int | None = 7,
+    created_at: datetime | None = datetime(2024, 6, 1, 12, 0, 0),
+) -> Activity:
+    return Activity(
+        id=id,
+        created_at=created_at,
+        action=action,
+        new_path=new_path,
+        old_path=old_path,
+        file_id=file_id,
+        user_id=user_id,
+    )
+
+
+class TestCmdActivity:
+    def test_empty(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_activity.return_value = iter([])
+        out = io.StringIO()
+
+        cmd_activity(
+            ns(drive=1, users=None, actions=None, files=None, since=None, until=None, limit=10),
+            client,
+            out=out,
+        )
+
+        assert out.getvalue() == "(no activity)\n"
+
+    def test_lists_entries(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_activity.return_value = iter(
+            [
+                make_activity(action="file_create", new_path="/Photos/a.jpg", old_path=""),
+                make_activity(
+                    action="file_mv",
+                    new_path="/Photos/2024/a.jpg",
+                    old_path="/Photos/a.jpg",
+                ),
+            ]
+        )
+        out = io.StringIO()
+
+        cmd_activity(
+            ns(drive=1, users=None, actions=None, files=None, since=None, until=None, limit=10),
+            client,
+            out=out,
+        )
+
+        text = out.getvalue()
+        assert "file_create" in text
+        assert "file_mv" in text
+        # Move action shows old -> new path
+        assert "/Photos/a.jpg -> /Photos/2024/a.jpg" in text
+        # user_id is rendered
+        assert "user=7" in text
+
+    def test_system_action_omits_user(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_activity.return_value = iter([make_activity(user_id=None, action="file_trash")])
+        out = io.StringIO()
+
+        cmd_activity(
+            ns(drive=1, users=None, actions=None, files=None, since=None, until=None, limit=10),
+            client,
+            out=out,
+        )
+
+        assert "system" in out.getvalue()
+
+    def test_resolves_file_paths(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.resolve_path.return_value = 50
+        client.list_activity.return_value = iter([])
+
+        cmd_activity(
+            ns(
+                drive=1,
+                users=None,
+                actions=None,
+                files=["Photos/img.jpg"],
+                since=None,
+                until=None,
+                limit=10,
+            ),
+            client,
+            out=io.StringIO(),
+        )
+
+        client.resolve_path.assert_called_once_with(1, "Photos/img.jpg")
+        assert client.list_activity.call_args.kwargs["files"] == [50]
+
+    def test_forwards_filters(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_activity.return_value = iter([])
+
+        cmd_activity(
+            ns(
+                drive=1,
+                users=[7],
+                actions=["file_mv"],
+                files=None,
+                since=1700000000,
+                until=1800000000,
+                limit=50,
+            ),
+            client,
+            out=io.StringIO(),
+        )
+
+        kwargs = client.list_activity.call_args.kwargs
+        assert kwargs["users"] == [7]
+        assert kwargs["actions"] == ["file_mv"]
+        assert kwargs["from_"] == 1700000000
+        assert kwargs["until"] == 1800000000
+        assert kwargs["limit"] == 50
+
+    def test_json_output(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_activity.return_value = iter([make_activity()])
+        out = io.StringIO()
+
+        cmd_activity(
+            ns(
+                drive=1,
+                users=None,
+                actions=None,
+                files=None,
+                since=None,
+                until=None,
+                limit=10,
+                output="json",
+            ),
+            client,
+            out=out,
+        )
+
+        payload = json.loads(out.getvalue())
+        assert isinstance(payload, list)
+        assert payload[0]["action"] == "file_create"
+        assert payload[0]["new_path"] == "/a.txt"
