@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -337,6 +338,29 @@ def _cmd_configure_set_default_drive(args: argparse.Namespace) -> None:
     print(f"Default drive set to {drive_id} for profile '{profile}'.")
 
 
+_COMPLETION_FILES = {
+    "bash": "ik.bash",
+    "zsh": "ik.zsh",
+    "fish": "ik.fish",
+}
+
+
+def cmd_completion(args: argparse.Namespace) -> None:
+    """Print a shell completion script to stdout.
+
+    The user installs it via `eval "$(ik completion bash)"` (bash),
+    `ik completion zsh > "${fpath[1]}/_ik"` (zsh), or
+    `ik completion fish | source` (fish).
+    """
+    try:
+        text = resources.files("ik.completions").joinpath(_COMPLETION_FILES[args.shell]).read_text()
+    except (KeyError, FileNotFoundError):
+        sys.exit(f"Error: No completion script for shell '{args.shell}'.")
+    sys.stdout.write(text)
+    if not text.endswith("\n"):
+        sys.stdout.write("\n")
+
+
 def cmd_drives(args: argparse.Namespace, client: KDriveClient) -> None:
     """List all drives."""
     drives = client.list_drives()
@@ -395,10 +419,26 @@ def main() -> None:
     # vps subcommands
     add_vps_commands(sub, GLOBAL_SUB)
 
+    # completion
+    completion_p = sub.add_parser(
+        "completion",
+        help="Print shell completion script",
+        parents=[GLOBAL_SUB],
+    )
+    completion_p.add_argument(
+        "shell",
+        choices=["bash", "zsh", "fish"],
+        help="Shell to generate a completion script for",
+    )
+
     args = parser.parse_args()
 
     if args.cmd == "configure":
         cmd_configure(args)
+        return
+
+    if args.cmd == "completion":
+        cmd_completion(args)
         return
 
     # Resolve active profile: explicit --profile wins, else config default.

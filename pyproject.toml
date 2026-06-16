@@ -40,6 +40,9 @@ ik = "ik.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+ik = ["completions/*.bash", "completions/*.zsh", "completions/*.fish"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

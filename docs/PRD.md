@@ -236,7 +236,7 @@ This layering means adding a new service (e.g. mail) is a new module under `src/
 ### v1.0 — Stable
 - API surface frozen
 - Documentation site (mkdocs)
-- Tab completion for bash, zsh, fish
+- ~~Tab completion for bash, zsh, fish~~ **(shipped in 0.4.0)**
 - Wheels for PyPI; Homebrew tap; Linux package
 
 ---

@@ -69,6 +69,30 @@ Upgrading:
 uv tool upgrade ik
 ```
 
+### Shell completion
+
+Tab-completion for bash, zsh, and fish ships with the binary. Install it once for your shell:
+
+**bash:**
+```bash
+# Add to ~/.bashrc for a permanent install:
+eval "$(ik completion bash)"
+```
+
+**zsh:**
+```bash
+# Save the completion to a directory in $fpath (e.g. ~/.zsh/completions):
+ik completion zsh > "${fpath[1]}/_ik"
+# Then add ~/.zsh/completions to $fpath in your .zshrc if it is not already.
+```
+
+**fish:**
+```bash
+ik completion fish | source
+```
+
+Profile names are read dynamically from `~/.config/ik/config.json` — `ik --profile <TAB>` completes the names you've configured.
+
 ---
 
 ## Quick start
