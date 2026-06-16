@@ -125,13 +125,13 @@ These are the jobs the CLI is being built to do. Stories marked **[shipped]** ar
 
 ### 7.3 Configuration
 
-- Config file: `~/.config/ik/config.json`
+- Config file: `~/.config/ik/config.json` (chmod 0o600 on POSIX)
 - Schema (v0.3):
     ```json
     {
       "default": "work",
       "profiles": {
-        "work":     {"token": "...", "account_id": 12345},
+        "work":     {"token": "...", "account_id": 12345, "default_drive": 6789},
         "personal": {"token": "...", "account_id": 67890}
       }
     }
@@ -139,11 +139,13 @@ These are the jobs the CLI is being built to do. Stories marked **[shipped]** ar
 - Environment overrides: `INFOMANIAK_TOKEN`, `INFOMANIAK_ACCOUNT_ID`
 - Resolution order for token: `--token` flag → `INFOMANIAK_TOKEN` env → profile's `token` (selected by `--profile` or `default`) → error.
 - Resolution order for account_id: `INFOMANIAK_ACCOUNT_ID` env → profile's `account_id` (same profile selection as above) → None (auto-detected by client).
+- Resolution order for default drive: `--drive` flag → active profile's `default_drive` → single-drive auto-pick → error.
 - v0.1 flat files (`{"token": "...", "account_id": 12345}`) are read transparently as if the user had a single profile named "default".
 - Commands:
     - `ik configure` — interactive; writes to the default profile.
     - `ik configure --profile <name>` — interactive; writes to `<name>`, creating the profile and setting it as default if it's the first.
     - `ik configure --list` — list profiles and mark the default.
+    - `ik configure --default-drive <id>` — set the default kDrive ID for the active profile; validates the ID against the live API.
 - Profile names: must match `[a-zA-Z0-9._-]{1,64}`.
 
 ### 7.4 Error handling
@@ -220,8 +222,8 @@ This layering means adding a new service (e.g. mail) is a new module under `src/
 
 ### v0.3 — Operations
 - `ik drive sync local remote` — one-way mirror (not bidirectional)
-- Trash management: `ik drive trash ls|empty|restore`
-- Drive-level operations: usage reports, lock/unlock
+- Trash management: `ik drive trash ls|empty|restore` **(shipped in 0.3.0)**
+- Drive-level operations: usage reports, lock/unlock; per-profile `default_drive` **(shipped in 0.3.0)**
 - Configuration profiles (`ik configure --profile work`) **(shipped in 0.3.0)**
 
 ### v0.4 — Beyond kDrive

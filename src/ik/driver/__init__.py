@@ -74,7 +74,7 @@ def _make_progress(
 
 def cmd_ls(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
     """List files in a directory."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     directory_id = _resolve_directory(client, drive_id, args.path)
 
     files = list(client.list_files(drive_id, directory_id))
@@ -92,7 +92,7 @@ def cmd_ls(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.std
 
 def cmd_tree(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
     """Display directory tree."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     root_id = _resolve_directory(client, drive_id, args.path)
 
     if _is_json(args):
@@ -142,7 +142,7 @@ def cmd_tree(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.s
 
 def cmd_mkdir(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
     """Create a directory."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
 
     path = args.path.rstrip("/")
     if "/" in path:
@@ -163,7 +163,7 @@ def cmd_upload(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys
     """Upload a file."""
     from pathlib import Path
 
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     local_path = Path(args.local)
     directory_id = args.dir or 1
 
@@ -196,7 +196,7 @@ def cmd_download(args: argparse.Namespace, client: KDriveClient, out: TextIO = s
     """Download a file."""
     from pathlib import Path
 
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     file_id = int(args.file)
     info = client.get_file(drive_id, file_id)
 
@@ -237,7 +237,7 @@ def cmd_download(args: argparse.Namespace, client: KDriveClient, out: TextIO = s
 
 def cmd_search(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
     """Search for files by name."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     results = list(client.search(drive_id, args.query))
 
     if _is_json(args):
@@ -254,7 +254,7 @@ def cmd_search(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys
 
 def cmd_rm(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
     """Move a file to trash. Prompts for confirmation unless --yes is set."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     path = args.path
 
     if path.isdigit():
@@ -280,7 +280,7 @@ def cmd_info(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.s
     """Get detailed file information."""
     import json
 
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     path = args.path
 
     if path.isdigit():
@@ -309,7 +309,7 @@ def cmd_mv(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.std
     cancel_id is returned. Use /1/async/tasks/{id} to poll or
     /2/drive/{drive_id}/cancel to abort.
     """
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     src_id = _resolve_source_id(client, drive_id, args.src)
     dst_id = _resolve_directory(client, drive_id, args.dst)
 
@@ -334,7 +334,7 @@ def cmd_mv(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.std
 
 def cmd_cp(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
     """Copy a file or directory to another directory."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     src_id = _resolve_source_id(client, drive_id, args.src)
     dst_id = _resolve_directory(client, drive_id, args.dst)
 
@@ -349,7 +349,7 @@ def cmd_share_create(
     args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout
 ) -> None:
     """Create a public share link for a file."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     file_id = _resolve_source_id(client, drive_id, args.file)
     link = client.create_share_link(
         drive_id,
@@ -374,7 +374,7 @@ def cmd_share_get(args: argparse.Namespace, client: KDriveClient, out: TextIO = 
     """Show the share-link settings for a file (JSON)."""
     import json
 
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     file_id = _resolve_source_id(client, drive_id, args.file)
     link = client.get_share_link(drive_id, file_id)
     data = {
@@ -403,7 +403,7 @@ def cmd_share_update(
     args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout
 ) -> None:
     """Partially update a share link. Only flags you pass are sent."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     file_id = _resolve_source_id(client, drive_id, args.file)
 
     changed = {
@@ -429,7 +429,7 @@ def cmd_share_remove(
     args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout
 ) -> None:
     """Remove the share link from a file."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     file_id = _resolve_source_id(client, drive_id, args.file)
     client.delete_share_link(drive_id, file_id)
     if _is_json(args):
@@ -440,7 +440,7 @@ def cmd_share_remove(
 
 def cmd_share_ls(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
     """List files that have a share link."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     files = list(client.list_shared_files(drive_id))
     if _is_json(args):
         out.write(json.dumps([sf.to_dict() for sf in files], indent=2) + "\n")
@@ -454,7 +454,7 @@ def cmd_share_ls(args: argparse.Namespace, client: KDriveClient, out: TextIO = s
 
 def cmd_trash_ls(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
     """List files in the trash."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     files = list(client.list_trash(drive_id))
 
     if _is_json(args):
@@ -473,7 +473,7 @@ def cmd_trash_empty(
     args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout
 ) -> None:
     """Permanently delete everything in the trash. Prompts unless --yes."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
 
     if not getattr(args, "yes", False):
         if not sys.stdin.isatty():
@@ -496,7 +496,7 @@ def cmd_trash_restore(
 ) -> None:
     """Restore a file from the trash. Async on the kDrive side; may return
     a cancel handle for polling or aborting."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
     file_id = _resolve_source_id(client, drive_id, args.file)
     destination_id = 1 if args.to is None else _resolve_directory(client, drive_id, args.to)
 
@@ -525,7 +525,7 @@ def cmd_trash_restore(
 
 def cmd_activity(args: argparse.Namespace, client: KDriveClient, out: TextIO = sys.stdout) -> None:
     """List recent drive activity (file ops, share changes, etc.)."""
-    drive_id = args.drive or _get_default_drive(client)
+    drive_id = args.drive or getattr(args, "default_drive", None) or _get_default_drive(client)
 
     file_ids: list[int] = []
     for f in args.files or []:

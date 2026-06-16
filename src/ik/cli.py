@@ -121,16 +121,22 @@ def _write_profile(
     token: str,
     account_id: int | None,
     *,
+    default_drive: int | None = None,
     set_default_if_first: bool = True,
 ) -> dict:
     """Return a NEW config dict with `profile` added/updated.
 
     Pure function. If `set_default_if_first` and config has no
-    'default' key after the update, set it to `profile`.
+    'default' key after the update, set it to `profile`. The
+    'default_drive' field is only written when non-None, so profiles
+    that don't set one stay clean.
     """
     new = {k: v for k, v in config.items() if k != "profiles"}
     profiles = dict(config.get("profiles") or {})
-    profiles[profile] = {"token": token, "account_id": account_id}
+    entry: dict = {"token": token, "account_id": account_id}
+    if default_drive is not None:
+        entry["default_drive"] = default_drive
+    profiles[profile] = entry
     new["profiles"] = profiles
     if set_default_if_first and "default" not in new:
         new["default"] = profile
@@ -242,6 +248,10 @@ def cmd_configure(args: argparse.Namespace) -> None:
         _cmd_configure_list(_read_config(), output_format=getattr(args, "output", "text"))
         return
 
+    if getattr(args, "default_drive", None) is not None:
+        _cmd_configure_set_default_drive(args)
+        return
+
     profile_name: str
     explicit = getattr(args, "profile", None)
     if explicit:
@@ -276,6 +286,55 @@ def cmd_configure(args: argparse.Namespace) -> None:
         _write_config(config, CONFIG_PATH)
     except KDriveError as e:
         sys.exit(f"Error: {e}")
+
+
+def _cmd_configure_set_default_drive(args: argparse.Namespace) -> None:
+    """Set default_drive on the active profile after validating the drive exists."""
+    explicit = getattr(args, "profile", None)
+    if explicit:
+        _validate_profile_name(explicit)
+        config = _read_config()
+        if explicit not in (config.get("profiles") or {}):
+            sys.exit(
+                f"Error: Profile '{explicit}' not found. "
+                f"Run `ik configure --profile {explicit}` to create it first."
+            )
+        profile = explicit
+    else:
+        config = _read_config()
+        try:
+            profile = _resolve_default_profile(config)
+        except _NoDefaultProfile:
+            sys.exit(
+                "Error: No configured profile. Run `ik configure` first, or pass --profile <name>."
+            )
+
+    drive_id: int = args.default_drive
+    entry = config["profiles"][profile]
+    token = entry.get("token")
+    if not token:
+        sys.exit(
+            f"Error: Profile '{profile}' has no token. Run `ik configure --profile {profile}` first."
+        )
+
+    client = KDriveClient(token)
+    try:
+        drives = client.list_drives()
+    except KDriveError as e:
+        sys.exit(f"Error: {e}")
+    if not any(d.id == drive_id for d in drives):
+        names = ", ".join(f"{d.id} ({d.name})" for d in drives) or "(none)"
+        sys.exit(f"Error: Drive {drive_id} not found on this account. Available: {names}.")
+
+    config = _write_profile(
+        config,
+        profile,
+        token,
+        entry.get("account_id"),
+        default_drive=drive_id,
+    )
+    _write_config(config, CONFIG_PATH)
+    print(f"Default drive set to {drive_id} for profile '{profile}'.")
 
 
 def cmd_drives(args: argparse.Namespace, client: KDriveClient) -> None:
@@ -316,6 +375,13 @@ def main() -> None:
     # configure
     configure_p = sub.add_parser("configure", help="Configure credentials", parents=[GLOBAL_SUB])
     configure_p.add_argument("--list", action="store_true", help="List configured profiles")
+    configure_p.add_argument(
+        "--default-drive",
+        type=int,
+        default=None,
+        metavar="ID",
+        help="Set the default kDrive ID for the active profile",
+    )
 
     # whoami
     sub.add_parser("whoami", help="Show current user", parents=[GLOBAL_SUB])
@@ -366,6 +432,14 @@ def main() -> None:
     account_id = _resolve_account_id(profile)
     if account_id is not None:
         os.environ["INFOMANIAK_ACCOUNT_ID"] = str(account_id)
+
+    # Inject default_drive from the active profile (if set) so drive
+    # commands can read it without re-reading the config.
+    if profile is not None:
+        config = _read_config()
+        default_drive = (config.get("profiles") or {}).get(profile, {}).get("default_drive")
+        if default_drive is not None:
+            args.default_drive = default_drive
 
     # Create client
     client = KDriveClient(token)

@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -18,6 +18,7 @@ from ik import KDriveClient
 from ik.cli import (
     _NoDefaultProfile,
     _cmd_configure_list,
+    _cmd_configure_set_default_drive,
     _migrate_v1_to_v3,
     _read_config,
     _resolve_account_id,
@@ -505,6 +506,36 @@ class TestWriteProfile:
         _write_profile(config, "personal", "p", None)
         assert config == snapshot
 
+    def test_writes_default_drive_when_set(self) -> None:
+        result = _write_profile({}, "work", "tok", 5, default_drive=42)
+        assert result["profiles"]["work"] == {
+            "token": "tok",
+            "account_id": 5,
+            "default_drive": 42,
+        }
+
+    def test_omits_default_drive_when_none(self) -> None:
+        result = _write_profile({}, "work", "tok", 5)
+        assert "default_drive" not in result["profiles"]["work"]
+
+    def test_overwrites_default_drive(self) -> None:
+        config = {
+            "default": "work",
+            "profiles": {"work": {"token": "t", "account_id": 1, "default_drive": 1}},
+        }
+        result = _write_profile(config, "work", "t", 1, default_drive=2)
+        assert result["profiles"]["work"]["default_drive"] == 2
+
+    def test_clearing_default_drive_via_explicit_none(self) -> None:
+        # When the caller passes default_drive=None, the key is removed
+        # from the existing entry. Useful for a future --clear-default-drive flow.
+        config = {
+            "default": "work",
+            "profiles": {"work": {"token": "t", "account_id": 1, "default_drive": 1}},
+        }
+        result = _write_profile(config, "work", "t", 1)
+        assert "default_drive" not in result["profiles"]["work"]
+
 
 # ── Profile resolution ────────────────────────────────────────────────
 
@@ -735,3 +766,156 @@ class TestCmdConfigureList:
         _cmd_configure_list({}, output_format="json")
         out = capsys.readouterr().out
         assert json.loads(out) == {}
+
+
+# ── _cmd_configure_set_default_drive ──────────────────────────────────
+
+
+class TestCmdConfigureSetDefaultDrive:
+    def test_sets_drive_after_validating_against_list_drives(
+        self, tmp_path, capsys: pytest.CaptureFixture
+    ) -> None:
+        import ik.cli
+
+        config = {
+            "default": "work",
+            "profiles": {"work": {"token": "t", "account_id": 1}},
+        }
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(config))
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(ik.cli, "CONFIG_PATH", str(config_path))
+
+        client = Mock(spec=KDriveClient)
+        client.list_drives.return_value = [
+            Mock(id=10, name="Personal"),
+            Mock(id=20, name="Work"),
+        ]
+        with patch("ik.cli.KDriveClient", return_value=client):
+            _cmd_configure_set_default_drive(ns(default_drive=20))
+
+        monkeypatch.undo()
+        on_disk = json.loads(config_path.read_text())
+        assert on_disk["profiles"]["work"]["default_drive"] == 20
+        assert "Default drive set to 20 for profile 'work'." in capsys.readouterr().out
+
+    def test_invalid_drive_id_exits(self, tmp_path, capsys: pytest.CaptureFixture) -> None:
+        import ik.cli
+
+        config = {
+            "default": "work",
+            "profiles": {"work": {"token": "t", "account_id": 1}},
+        }
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(config))
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(ik.cli, "CONFIG_PATH", str(config_path))
+
+        client = Mock(spec=KDriveClient)
+        client.list_drives.return_value = [Mock(id=10, name="Personal")]
+        with patch("ik.cli.KDriveClient", return_value=client):
+            with pytest.raises(SystemExit) as exc_info:
+                _cmd_configure_set_default_drive(ns(default_drive=999))
+
+        monkeypatch.undo()
+        assert "Drive 999 not found" in str(exc_info.value)
+        # Config must NOT be updated when validation fails.
+        on_disk = json.loads(config_path.read_text())
+        assert "default_drive" not in on_disk["profiles"]["work"]
+
+    def test_no_drives_on_account_exits(self, tmp_path) -> None:
+        import ik.cli
+
+        config = {
+            "default": "work",
+            "profiles": {"work": {"token": "t", "account_id": 1}},
+        }
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(config))
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(ik.cli, "CONFIG_PATH", str(config_path))
+
+        client = Mock(spec=KDriveClient)
+        client.list_drives.return_value = []
+        with patch("ik.cli.KDriveClient", return_value=client):
+            with pytest.raises(SystemExit) as exc_info:
+                _cmd_configure_set_default_drive(ns(default_drive=20))
+
+        monkeypatch.undo()
+        assert "Drive 20 not found" in str(exc_info.value)
+
+    def test_uses_explicit_profile_when_set(self, tmp_path) -> None:
+        import ik.cli
+
+        config = {
+            "default": "work",
+            "profiles": {
+                "work": {"token": "wt", "account_id": 1},
+                "personal": {"token": "pt", "account_id": 2},
+            },
+        }
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(config))
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(ik.cli, "CONFIG_PATH", str(config_path))
+
+        client = Mock(spec=KDriveClient)
+        client.list_drives.return_value = [Mock(id=20, name="Work")]
+        with patch("ik.cli.KDriveClient", return_value=client):
+            _cmd_configure_set_default_drive(ns(default_drive=20, profile="personal"))
+
+        monkeypatch.undo()
+        on_disk = json.loads(config_path.read_text())
+        # Set on 'personal', not on the default 'work'.
+        assert "default_drive" not in on_disk["profiles"]["work"]
+        assert on_disk["profiles"]["personal"]["default_drive"] == 20
+
+    def test_explicit_profile_not_found_exits(self, tmp_path) -> None:
+        import ik.cli
+
+        config = {
+            "default": "work",
+            "profiles": {"work": {"token": "t", "account_id": 1}},
+        }
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(config))
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(ik.cli, "CONFIG_PATH", str(config_path))
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_configure_set_default_drive(ns(default_drive=20, profile="ghost"))
+
+        monkeypatch.undo()
+        assert "ghost" in str(exc_info.value)
+
+    def test_no_config_exits(self, tmp_path) -> None:
+        import ik.cli
+
+        config_path = tmp_path / "config.json"
+        # File does not exist.
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(ik.cli, "CONFIG_PATH", str(config_path))
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_configure_set_default_drive(ns(default_drive=20))
+
+        monkeypatch.undo()
+        assert "No configured profile" in str(exc_info.value)
+
+    def test_profile_with_no_token_exits(self, tmp_path) -> None:
+        import ik.cli
+
+        config = {
+            "default": "work",
+            "profiles": {"work": {"account_id": 1}},  # no token
+        }
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(config))
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(ik.cli, "CONFIG_PATH", str(config_path))
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_configure_set_default_drive(ns(default_drive=20))
+
+        monkeypatch.undo()
+        assert "no token" in str(exc_info.value)

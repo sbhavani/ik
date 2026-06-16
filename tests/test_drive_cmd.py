@@ -138,6 +138,33 @@ class TestCmdLs:
         client.list_drives.assert_called_once()
         client.list_files.assert_called_once_with(99, 1)
 
+    def test_uses_default_drive_from_namespace(self) -> None:
+        client = Mock(spec=KDriveClient)
+        # list_drives must NOT be called when default_drive is set
+        client.list_files.return_value = iter([])
+
+        cmd_ls(
+            ns(drive=None, default_drive=42, path=None, show_id=False),
+            client,
+            out=io.StringIO(),
+        )
+
+        client.list_drives.assert_not_called()
+        client.list_files.assert_called_once_with(42, 1)
+
+    def test_explicit_drive_wins_over_default_drive(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_files.return_value = iter([])
+
+        cmd_ls(
+            ns(drive=99, default_drive=42, path=None, show_id=False),
+            client,
+            out=io.StringIO(),
+        )
+
+        client.list_drives.assert_not_called()
+        client.list_files.assert_called_once_with(99, 1)
+
     def test_json_output(self) -> None:
         client = Mock(spec=KDriveClient)
         client.list_files.return_value = iter(
@@ -739,6 +766,36 @@ class TestCmdMv:
 
         client.list_drives.assert_called_once()
         # drive_id comes from the default-drive fallback
+        assert client.move_file.call_args.args[0] == 99
+
+    def test_uses_default_drive_from_namespace(self) -> None:
+        from ik import MoveOperation
+
+        client = Mock(spec=KDriveClient)
+        client.move_file.return_value = MoveOperation(cancel_id="op-5", valid_until=None)
+
+        cmd_mv(
+            ns(drive=None, default_drive=42, src="123", dst="Archive", name=None),
+            client,
+            out=io.StringIO(),
+        )
+
+        client.list_drives.assert_not_called()
+        assert client.move_file.call_args.args[0] == 42
+
+    def test_explicit_drive_wins_over_default_drive(self) -> None:
+        from ik import MoveOperation
+
+        client = Mock(spec=KDriveClient)
+        client.move_file.return_value = MoveOperation(cancel_id="op-6", valid_until=None)
+
+        cmd_mv(
+            ns(drive=99, default_drive=42, src="123", dst="Archive", name=None),
+            client,
+            out=io.StringIO(),
+        )
+
+        client.list_drives.assert_not_called()
         assert client.move_file.call_args.args[0] == 99
 
     def test_quiet_suppresses_async_note(self) -> None:

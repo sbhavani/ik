@@ -167,6 +167,18 @@ ik --profile work --token OTHER_TOKEN drive info 123
 Resolution order for token: **`--token` flag** → `INFOMANIAK_TOKEN` env → profile's `token` → error.
 Resolution order for account_id: **`INFOMANIAK_ACCOUNT_ID` env** → profile's `account_id` → `None` (auto-detected).
 
+### Default drive
+
+If your account has multiple kDrives, set a per-profile default so you stop passing `--drive` on every command:
+
+```bash
+ik drives                   # find the drive ID you want
+ik configure --default-drive 1234
+ik drive ls                 # no --drive needed
+```
+
+The drive ID is validated against the live API before being saved. Pass `--drive <id>` on any command to override for one call.
+
 ---
 
 ## Commands
