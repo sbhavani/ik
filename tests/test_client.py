@@ -796,3 +796,36 @@ class TestShareLinks:
         assert session.request.call_count == 2
         # Second call carries the cursor
         assert session.request.call_args_list[1].kwargs["params"]["cursor"] == "C1"
+
+
+class TestPublicClouds:
+    def test_list_public_clouds(self, vps_dict: dict) -> None:
+        session = Mock(spec=requests.Session)
+        # First call: account_id discovery; second: public_clouds list
+        session.request.side_effect = [
+            make_response(200, {"data": [{"id": 7}]}),
+            make_response(200, {"data": [vps_dict]}),
+        ]
+        client = make_client(session)
+
+        vpses = client.list_public_clouds()
+
+        assert len(vpses) == 1
+        assert vpses[0].id == 1001
+        assert vpses[0].name == "My VPS Cloud"
+        assert vpses[0].project_count == 3
+        assert vpses[0].price == 12.0
+        # Second call hits /1/public_clouds
+        assert "/1/public_clouds" in session.request.call_args_list[1].args[1]
+
+    def test_get_public_cloud(self, vps_dict: dict) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(200, {"data": vps_dict})
+        client = make_client(session)
+
+        v = client.get_public_cloud(1001)
+
+        assert v.id == 1001
+        assert v.name == "My VPS Cloud"
+        assert v.description == "Production environment"
+        assert "/1/public_clouds/1001" in session.request.call_args.args[1]

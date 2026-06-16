@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from ik import Activity, Drive, File, MoveOperation, ShareLink, SharedFile
+from ik import Activity, Drive, File, MoveOperation, ShareLink, SharedFile, VPS
 from ik.driver import _format_size
 
 
@@ -268,3 +268,75 @@ class TestActivityToDict:
         assert d["created_at"] is None
         assert d["file_id"] is None
         assert d["user_id"] is None
+
+
+class TestVPSFromApi:
+    def test_full_payload(self, vps_dict: dict) -> None:
+        from datetime import datetime
+
+        v = VPS.from_api(vps_dict)
+        assert v.id == 1001
+        assert v.name == "My VPS Cloud"
+        assert v.description == "Production environment"
+        assert v.is_locked is False
+        assert v.has_maintenance is False
+        assert v.has_operation_in_progress is False
+        assert v.project_count == 3
+        assert v.price == 12.0
+        # from_api uses local time (matches Activity/SharedFile/ShareLink pattern).
+        assert v.created_at == datetime.fromtimestamp(1705314600)
+        assert v.expired_at is None
+
+    def test_falls_back_to_internal_name(self, vps_dict: dict) -> None:
+        del vps_dict["customer_name"]
+        vps_dict["internal_name"] = "vps-prod-01"
+        v = VPS.from_api(vps_dict)
+        assert v.name == "vps-prod-01"
+
+    def test_empty_dict_uses_defaults(self) -> None:
+        v = VPS.from_api({})
+        assert v.id == 0
+        assert v.name == "Unnamed"
+        assert v.description == ""
+        assert v.is_locked is False
+        assert v.project_count == 0
+        assert v.price is None
+        assert v.created_at is None
+        assert v.expired_at is None
+
+    def test_missing_public_cloud_subobject(self, vps_dict: dict) -> None:
+        del vps_dict["public_cloud"]
+        v = VPS.from_api(vps_dict)
+        assert v.project_count == 0
+        assert v.price is None
+
+
+class TestVPSToDict:
+    def test_serializes_all_fields(self) -> None:
+        from datetime import datetime
+
+        v = VPS(
+            id=1,
+            name="vps",
+            description="d",
+            is_locked=False,
+            has_maintenance=False,
+            has_operation_in_progress=True,
+            project_count=5,
+            price=9.99,
+            created_at=datetime(2024, 1, 2, 3, 4, 5),
+            expired_at=None,
+        )
+        d = v.to_dict()
+        assert d == {
+            "id": 1,
+            "name": "vps",
+            "description": "d",
+            "is_locked": False,
+            "has_maintenance": False,
+            "has_operation_in_progress": True,
+            "project_count": 5,
+            "price": 9.99,
+            "created_at": "2024-01-02T03:04:05",
+            "expired_at": None,
+        }

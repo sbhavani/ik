@@ -267,6 +267,60 @@ class Activity:
         }
 
 
+@dataclass
+class VPS:
+    """A VPS Cloud service container.
+
+    In Infomaniak's API a "public_cloud" is the service container
+    (analogous to a kDrive) that holds VM instances inside projects.
+    The fields here are the public-facing ones: id, name, description,
+    status flags, project count, price, and timestamps.
+    """
+
+    id: int
+    name: str
+    description: str
+    is_locked: bool
+    has_maintenance: bool
+    has_operation_in_progress: bool
+    project_count: int
+    price: float | None
+    created_at: datetime | None
+    expired_at: datetime | None
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> VPS:
+        pc = data.get("public_cloud") or {}
+        ts_created = data.get("created_at")
+        ts_expired = data.get("expired_at")
+        return cls(
+            id=data.get("id", 0),
+            name=data.get("customer_name") or data.get("internal_name") or "Unnamed",
+            description=data.get("description", ""),
+            is_locked=data.get("is_locked", False),
+            has_maintenance=data.get("has_maintenance", False),
+            has_operation_in_progress=data.get("has_operation_in_progress", False),
+            project_count=pc.get("project_count", 0),
+            price=pc.get("price"),
+            created_at=datetime.fromtimestamp(ts_created) if ts_created else None,
+            expired_at=datetime.fromtimestamp(ts_expired) if ts_expired else None,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "is_locked": self.is_locked,
+            "has_maintenance": self.has_maintenance,
+            "has_operation_in_progress": self.has_operation_in_progress,
+            "project_count": self.project_count,
+            "price": self.price,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "expired_at": self.expired_at.isoformat() if self.expired_at else None,
+        }
+
+
 _UNSET: Any = object()
 """Sentinel for distinguishing 'argument not passed' from 'argument is None'.
 
@@ -731,8 +785,20 @@ class KDriveClient:
             current_id = match.id
         return current_id
 
+    # ── Public Cloud / VPS ──────────────────────────────────────────────
+
+    def list_public_clouds(self) -> list[VPS]:
+        """List all VPS Cloud service containers for the account."""
+        body = self._request("GET", "/1/public_clouds", params={"account_id": self.account_id})
+        return [VPS.from_api(d) for d in body.get("data", [])]
+
+    def get_public_cloud(self, public_cloud_id: int) -> VPS:
+        """Get details of a specific VPS Cloud service."""
+        body = self._request("GET", f"/1/public_clouds/{public_cloud_id}")
+        return VPS.from_api(body.get("data", {}))
+
 
 class KDriveError(Exception):
-    """Error raised by kDrive API operations."""
+    """Error raised by Infomaniak API operations."""
 
     pass

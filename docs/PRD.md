@@ -227,6 +227,7 @@ This layering means adding a new service (e.g. mail) is a new module under `src/
 ### v0.4 — Beyond kDrive
 - Mail service (`ik mail ...`) — list mailboxes, read messages
 - Hosting service (`ik hosting ...`) — manage web hosting
+- VPS service (`ik vps ...`) — manage Public Cloud / VPS instances **(shipped in 0.4.0, thin slice: `ls`, `info`)**
 - Domains service (`ik domain ...`)
 - This is the moment the package earns its "Infomaniak CLI" name rather than "kDrive CLI"
 
