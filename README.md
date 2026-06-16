@@ -29,6 +29,19 @@ Or set token via environment:
 export INFOMANIAK_TOKEN="your-token-here"
 ```
 
+### Profiles
+
+For multiple Infomaniak accounts, store each in a named profile:
+
+```bash
+ik configure --profile work        # Save a token under "work"
+ik --profile work drives           # Use it for one command
+ik configure --profile personal    # Add a second profile
+ik configure --list                # See all profiles
+```
+
+The first `ik configure` becomes the default. Use `--profile NAME` to switch.
+
 ## Commands
 
 ### Drive Operations

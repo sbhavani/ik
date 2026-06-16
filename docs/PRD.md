@@ -120,14 +120,31 @@ These are the jobs the CLI is being built to do. Stories marked **[shipped]** ar
 ### 7.2 Global flags
 
 - `--token <token>` — override the stored token for one invocation
-- `--output json|text` — machine-parseable output (planned: see §10)
+- `--profile <name>` — use a named configuration profile (see §7.3)
+- `--output json|text` — machine-parseable output
 
 ### 7.3 Configuration
 
 - Config file: `~/.config/ik/config.json`
-- Schema (v0.1): `{ "token": "...", "account_id": 12345 }`
+- Schema (v0.3):
+    ```json
+    {
+      "default": "work",
+      "profiles": {
+        "work":     {"token": "...", "account_id": 12345},
+        "personal": {"token": "...", "account_id": 67890}
+      }
+    }
+    ```
 - Environment overrides: `INFOMANIAK_TOKEN`, `INFOMANIAK_ACCOUNT_ID`
-- Resolution order: `--token` flag → env var → config file → error
+- Resolution order for token: `--token` flag → `INFOMANIAK_TOKEN` env → profile's `token` (selected by `--profile` or `default`) → error.
+- Resolution order for account_id: `INFOMANIAK_ACCOUNT_ID` env → profile's `account_id` (same profile selection as above) → None (auto-detected by client).
+- v0.1 flat files (`{"token": "...", "account_id": 12345}`) are read transparently as if the user had a single profile named "default".
+- Commands:
+    - `ik configure` — interactive; writes to the default profile.
+    - `ik configure --profile <name>` — interactive; writes to `<name>`, creating the profile and setting it as default if it's the first.
+    - `ik configure --list` — list profiles and mark the default.
+- Profile names: must match `[a-zA-Z0-9._-]{1,64}`.
 
 ### 7.4 Error handling
 
@@ -205,7 +222,7 @@ This layering means adding a new service (e.g. mail) is a new module under `src/
 - `ik drive sync local remote` — one-way mirror (not bidirectional)
 - Trash management: `ik drive trash ls|empty|restore`
 - Drive-level operations: usage reports, lock/unlock
-- Configuration profiles (`ik configure --profile work`)
+- Configuration profiles (`ik configure --profile work`) **(shipped in 0.3.0)**
 
 ### v0.4 — Beyond kDrive
 - Mail service (`ik mail ...`) — list mailboxes, read messages
@@ -237,7 +254,7 @@ The v1.0 bar is: a user can do everything they would do in the kDrive web consol
 ## 12. Open Questions
 
 - **Auth refresh.** The Infomaniak API uses static bearer tokens today. If/when OAuth or short-lived tokens arrive, the config schema in §7.3 will need to change.
-- **Multi-account UX.** `INFOMANIAK_ACCOUNT_ID` lets you pick an account, but a clean `--profile` story (§10 v0.3) is the right answer. Until then, the env var is the workaround.
+- **Multi-account UX.** `INFOMANIAK_ACCOUNT_ID` lets you pick an account, but a clean `--profile` story (§10 v0.3) is the right answer. Until then, the env var is the workaround. *(resolved — see §7.3)*
 - **Sync semantics.** Bidirectional sync (`ik drive sync`) has a long history of subtle bugs (see Dropbox, Syncthing). v0.3 scopes to one-way mirror to keep the surface honest. Bidirectional is explicitly out of scope.
 - **Output format stability.** When `--output json` lands, the schema becomes a public contract. We will version it (`--output json-v2`) rather than break it silently.
 - **Service priority for v0.4.** Mail, hosting, and domains are all candidates. The order will be set by user demand — feature requests are the signal.

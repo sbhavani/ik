@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import sys
+from pathlib import Path
 from typing import Any
 
 from . import KDriveClient, KDriveError
 from .driver import add_drive_commands
+from .vps import add_vps_commands
+
+CONFIG_DIR = os.path.expanduser("~/.config/ik")
+CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
+PROFILE_NAME_RE = re.compile(r"^[a-zA-Z0-9._-]{1,64}$")
+
+
+class _NoDefaultProfile(Exception):
+    """Raised when no profiles exist in the config at all."""
 
 
 def _make_globals(suppress: bool) -> argparse.ArgumentParser:
@@ -28,6 +40,11 @@ def _make_globals(suppress: bool) -> argparse.ArgumentParser:
     bool_default: Any = argparse.SUPPRESS if suppress else False
 
     p.add_argument("--token", help="API token override", default=default)
+    p.add_argument(
+        "--profile",
+        default=default,
+        help="Configuration profile to use (overrides `default` in config)",
+    )
     p.add_argument(
         "--output",
         choices=["text", "json"],
@@ -50,8 +67,102 @@ GLOBAL = _make_globals(suppress=False)
 GLOBAL_SUB = _make_globals(suppress=True)
 
 
-def _resolve_token(args: argparse.Namespace) -> str:
-    """Resolve API token from args or environment."""
+# ── Config (v0.3 nested schema) ───────────────────────────────────────
+
+
+def _read_config() -> dict:
+    """Read config; normalize v0.1 flat shape to v0.3 in memory.
+
+    Returns {} if the file is missing. Exits on corrupt JSON.
+    """
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+    try:
+        with open(CONFIG_PATH) as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        sys.exit(
+            f"Error: Config file is corrupt ({CONFIG_PATH}): {e}. Fix it or delete it to start fresh."
+        )
+    return _migrate_v1_to_v3(data)
+
+
+def _migrate_v1_to_v3(data: dict) -> dict:
+    """Convert a v0.1 flat config in memory to a v0.3 nested shape.
+
+    A v0.1 file has top-level 'token'/'account_id' keys. We treat it as
+    a single implicit profile named 'default'. No disk write.
+    """
+    if "profiles" in data:
+        return data
+    flat = {k: v for k, v in data.items() if k in ("token", "account_id")}
+    if not flat:
+        return data
+    return {"default": "default", "profiles": {"default": flat}}
+
+
+def _write_config(config: dict, path: str = CONFIG_PATH) -> None:
+    """Serialize v0.3 config to disk (indent=2). Creates parent dir."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+
+
+def _write_profile(
+    config: dict,
+    profile: str,
+    token: str,
+    account_id: int | None,
+    *,
+    set_default_if_first: bool = True,
+) -> dict:
+    """Return a NEW config dict with `profile` added/updated.
+
+    Pure function. If `set_default_if_first` and config has no
+    'default' key after the update, set it to `profile`.
+    """
+    new = {k: v for k, v in config.items() if k != "profiles"}
+    profiles = dict(config.get("profiles") or {})
+    profiles[profile] = {"token": token, "account_id": account_id}
+    new["profiles"] = profiles
+    if set_default_if_first and "default" not in new:
+        new["default"] = profile
+    return new
+
+
+def _resolve_default_profile(config: dict) -> str:
+    """Return the active profile name from config.
+
+    Raises _NoDefaultProfile if no profiles exist. Exits on ambiguous
+    config (multiple profiles, no default; or default points to a
+    missing profile).
+    """
+    profiles = config.get("profiles") or {}
+    if not profiles:
+        raise _NoDefaultProfile
+
+    default = config.get("default")
+    if default is None:
+        sys.exit(
+            "Error: Multiple profiles configured but no default. "
+            "Pass --profile <name> or set one with `ik configure`."
+        )
+    if default not in profiles:
+        sys.exit(
+            f"Error: Default profile '{default}' not found in config. "
+            f"Run `ik configure` to repair, or set 'default' to an existing profile."
+        )
+    return default
+
+
+def _validate_profile_name(name: str) -> None:
+    if not PROFILE_NAME_RE.match(name):
+        sys.exit(f"Error: Invalid profile name '{name}'. Must match [a-zA-Z0-9._-]{{1,64}}.")
+
+
+def _resolve_token(args: argparse.Namespace, profile: str | None) -> str:
+    """Resolve API token from flag, env, or named profile."""
     if args.token:
         return args.token
 
@@ -59,66 +170,104 @@ def _resolve_token(args: argparse.Namespace) -> str:
     if token:
         return token
 
-    config_path = os.path.expanduser("~/.config/ik/config.json")
-    if os.path.exists(config_path):
-        import json
-
-        with open(config_path) as f:
-            config = json.load(f)
-            if config.get("token"):
-                return config["token"]
+    if profile is not None:
+        config = _read_config()
+        prof = (config.get("profiles") or {}).get(profile)
+        if prof and prof.get("token"):
+            return prof["token"]
+        existing = sorted((config.get("profiles") or {}).keys())
+        if existing:
+            sys.exit(
+                f"Error: Profile '{profile}' not found. "
+                f"Run `ik configure --profile {profile}` to create it, "
+                f"or use one of: {', '.join(existing)}."
+            )
+        sys.exit(
+            f"Error: No API token found for profile '{profile}'. "
+            f"Set INFOMANIAK_TOKEN env, pass --token, or run `ik configure`."
+        )
 
     sys.exit("Error: No API token found. Set INFOMANIAK_TOKEN env or run `ik configure`")
 
 
-def _resolve_account_id(token: str) -> int | None:
-    """Resolve account ID from env or config."""
+def _resolve_account_id(profile: str | None) -> int | None:
+    """Resolve account ID from env or named profile."""
     account_id = os.environ.get("INFOMANIAK_ACCOUNT_ID")
     if account_id:
         return int(account_id)
 
-    config_path = os.path.expanduser("~/.config/ik/config.json")
-    if os.path.exists(config_path):
-        import json
-
-        with open(config_path) as f:
-            config = json.load(f)
-            if config.get("account_id"):
-                return int(config["account_id"])
+    if profile is not None:
+        config = _read_config()
+        prof = (config.get("profiles") or {}).get(profile)
+        if prof and prof.get("account_id") is not None:
+            return int(prof["account_id"])
 
     return None
 
 
+def _cmd_configure_list(config: dict, output_format: str = "text") -> None:
+    """Print profiles with default marker. Honors --output format."""
+    if output_format == "json":
+        sys.stdout.write(json.dumps(config, indent=2) + "\n")
+        return
+
+    profiles = config.get("profiles") or {}
+    if not profiles:
+        print("(no profiles configured)")
+        return
+
+    default = config.get("default")
+    name_width = max(len(n) for n in profiles)
+    for name in sorted(profiles):
+        marker = "*" if name == default else ("!" if default and name == default else " ")
+        prof = profiles[name]
+        account_id = prof.get("account_id")
+        suffix = ""
+        if default and name not in profiles:
+            suffix = "  (missing)"
+        print(
+            f"{marker} {name:<{name_width}}  {account_id if account_id is not None else ''}{suffix}"
+        )
+
+
 def cmd_configure(args: argparse.Namespace) -> None:
-    """Interactive configuration."""
-    import json
+    """Interactive configuration, or list profiles with --list."""
+    if getattr(args, "list", False):
+        _cmd_configure_list(_read_config(), output_format=getattr(args, "output", "text"))
+        return
 
-    config_dir = os.path.expanduser("~/.config/ik")
-    os.makedirs(config_dir, exist_ok=True)
-    config_path = os.path.join(config_dir, "config.json")
+    profile_name: str
+    explicit = getattr(args, "profile", None)
+    if explicit:
+        _validate_profile_name(explicit)
+        profile_name = explicit
+    else:
+        config = _read_config()
+        existing_default = config.get("default")
+        if existing_default and (config.get("profiles") or {}).get(existing_default):
+            profile_name = existing_default
+        else:
+            profile_name = "default"
 
-    print("ik CLI Configuration\n")
+    print("ik CLI Configuration")
+    print(f"Profile: {profile_name}\n")
 
     token = input("Enter your Infomaniak API token: ").strip()
     if not token:
         sys.exit("Error: Token required")
 
-    # Save token
-    config = {"token": token}
-    with open(config_path, "w") as f:
-        json.dump(config, f)
-    print(f"Token saved to {config_path}\n")
+    config = _read_config()
+    config = _write_profile(config, profile_name, token, None)
+    _write_config(config, CONFIG_PATH)
+    print(f"Token saved to {CONFIG_PATH}\n")
 
-    # Verify token and detect account
     try:
         client = KDriveClient(token)
-        account_id = _resolve_account_id(token)
-        if account_id is None:
-            account_id = client.account_id
+        account_id = client.account_id
         print(f"Authenticated successfully. Account ID: {account_id}")
-        config["account_id"] = account_id
-        with open(config_path, "w") as f:
-            json.dump(config, f)
+        config = _read_config()
+        config = _write_profile(config, profile_name, token, account_id)
+        _write_config(config, CONFIG_PATH)
     except KDriveError as e:
         sys.exit(f"Error: {e}")
 
@@ -159,7 +308,8 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     # configure
-    sub.add_parser("configure", help="Configure credentials", parents=[GLOBAL_SUB])
+    configure_p = sub.add_parser("configure", help="Configure credentials", parents=[GLOBAL_SUB])
+    configure_p.add_argument("--list", action="store_true", help="List configured profiles")
 
     # whoami
     sub.add_parser("whoami", help="Show current user", parents=[GLOBAL_SUB])
@@ -170,18 +320,45 @@ def main() -> None:
     # drive subcommands
     add_drive_commands(sub, GLOBAL_SUB)
 
+    # vps subcommands
+    add_vps_commands(sub, GLOBAL_SUB)
+
     args = parser.parse_args()
 
     if args.cmd == "configure":
         cmd_configure(args)
         return
 
-    # Get token
-    token = _resolve_token(args)
+    # Resolve active profile: explicit --profile wins, else config default.
+    profile: str | None = None
+    explicit = getattr(args, "profile", None)
+    if explicit:
+        _validate_profile_name(explicit)
+        config = _read_config()
+        profiles = config.get("profiles") or {}
+        if explicit not in profiles:
+            existing = sorted(profiles.keys())
+            if existing:
+                sys.exit(
+                    f"Error: Profile '{explicit}' not found. "
+                    f"Run `ik configure --profile {explicit}` to create it, "
+                    f"or use one of: {', '.join(existing)}."
+                )
+            sys.exit(
+                f"Error: Profile '{explicit}' not found. "
+                f"Run `ik configure --profile {explicit}` to create it."
+            )
+        profile = explicit
+    else:
+        try:
+            profile = _resolve_default_profile(_read_config())
+        except _NoDefaultProfile:
+            profile = None
 
-    # Handle account ID override
-    account_id = _resolve_account_id(token)
-    if account_id:
+    # Token & account_id
+    token = _resolve_token(args, profile)
+    account_id = _resolve_account_id(profile)
+    if account_id is not None:
         os.environ["INFOMANIAK_ACCOUNT_ID"] = str(account_id)
 
     # Create client
@@ -193,6 +370,11 @@ def main() -> None:
     elif args.cmd == "drives":
         cmd_drives(args, client)
     elif args.cmd == "drive":
+        try:
+            args.func(args, client)
+        except KDriveError as e:
+            sys.exit(f"Error: {e}")
+    elif args.cmd == "vps":
         try:
             args.func(args, client)
         except KDriveError as e:

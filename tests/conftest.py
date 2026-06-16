@@ -54,3 +54,36 @@ def file_dict() -> dict[str, Any]:
         "modified_at": "2024-01-16T12:00:00+00:00",
         "mime": "application/pdf",
     }
+
+
+@pytest.fixture
+def vps_dict() -> dict[str, Any]:
+    return {
+        "id": 1001,
+        "account_id": 5,
+        "customer_name": "My VPS Cloud",
+        "description": "Production environment",
+        "internal_name": "vps-prod-01",
+        "is_locked": False,
+        "has_maintenance": False,
+        "has_operation_in_progress": False,
+        "is_free": False,
+        "is_zero_price": False,
+        "is_trial": False,
+        "service_id": 200,
+        "service_name": "VPS Cloud S",
+        "unique_id": 1001,
+        "version": 1,
+        "tags": [],
+        "rights": {"technical": True, "statistic": True, "check": True, "sale": True},
+        "created_at": 1705314600,  # 2024-01-15 10:30:00 UTC
+        "expired_at": None,
+        "public_cloud": {
+            "price": 12.0,
+            "price_updated_at": 1705314600,
+            "updated_at": 1705314600,
+            "project_count": 3,
+            "billing_start_at": 1705314600,
+            "billing_end_at": 1736850600,
+        },
+    }
