@@ -102,11 +102,17 @@ def _migrate_v1_to_v3(data: dict) -> dict:
 
 
 def _write_config(config: dict, path: str = CONFIG_PATH) -> None:
-    """Serialize v0.3 config to disk (indent=2). Creates parent dir."""
+    """Serialize v0.3 config to disk (indent=2). Creates parent dir.
+
+    Tightens file mode to 0o600 on POSIX so the stored API token is
+    only readable by the owning user. Windows is unaffected.
+    """
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(config, f, indent=2)
         f.write("\n")
+    if os.name == "posix":
+        os.chmod(path, 0o600)
 
 
 def _write_profile(

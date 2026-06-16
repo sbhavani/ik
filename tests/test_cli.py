@@ -444,6 +444,13 @@ class TestWriteConfig:
         _write_config({}, str(path))
         assert path.exists()
 
+    def test_tightens_permissions_on_posix(self, tmp_path) -> None:
+        if os.name != "posix":
+            pytest.skip("chmod is a no-op on Windows")
+        path = tmp_path / "config.json"
+        _write_config({"default": "x", "profiles": {"x": {"token": "t"}}}, str(path))
+        assert path.stat().st_mode & 0o777 == 0o600
+
 
 class TestWriteProfile:
     def test_creates_new_profile_in_empty_config(self) -> None:
