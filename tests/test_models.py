@@ -349,6 +349,7 @@ class TestMyKSuiteFromApi:
         m = MyKSuite.from_api(my_ksuite_dict)
         assert m.id == 1234
         assert m.pack == "kSuite Standard"
+        assert m.pack_id == 7
         assert m.status == "active"
         assert m.product == "ksuite"
         assert m.is_free is False
@@ -360,13 +361,33 @@ class TestMyKSuiteFromApi:
     def test_empty_dict_uses_defaults(self) -> None:
         m = MyKSuite.from_api({})
         assert m.id == 0
-        assert m.pack == "Unnamed"
+        assert m.pack == ""
+        assert m.pack_id == 0
         assert m.status == "Unknown"
         assert m.product == ""
         assert m.is_free is False
         assert m.drive is None
         assert m.mail is None
         assert m.has_auto_renew == ""
+        assert m.trial_expiry_at is None
+
+    def test_live_payload_unwrapped(self) -> None:
+        # The Infomaniak client unwraps the "data" envelope, so the
+        # parser sees the inner object. Real shape:
+        m = MyKSuite.from_api(
+            {
+                "id": 492079,
+                "status": "healthy",
+                "pack_id": 1,
+                "trial_expiry_at": None,
+                "is_free": True,
+            }
+        )
+        assert m.id == 492079
+        assert m.pack == ""  # live API omits "pack"
+        assert m.pack_id == 1
+        assert m.is_free is True
+        assert m.status == "healthy"
         assert m.trial_expiry_at is None
 
     def test_null_trial_expiry_at_is_none(self, my_ksuite_dict: dict) -> None:
@@ -396,6 +417,7 @@ class TestMyKSuiteToDict:
         m = MyKSuite(
             id=1,
             pack="kSuite Free",
+            pack_id=1,
             status="active",
             product="ksuite",
             is_free=True,
@@ -408,6 +430,7 @@ class TestMyKSuiteToDict:
         assert d == {
             "id": 1,
             "pack": "kSuite Free",
+            "pack_id": 1,
             "status": "active",
             "product": "ksuite",
             "is_free": True,
@@ -421,6 +444,7 @@ class TestMyKSuiteToDict:
         m = MyKSuite(
             id=0,
             pack="",
+            pack_id=0,
             status="",
             product="",
             is_free=False,

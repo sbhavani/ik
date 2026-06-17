@@ -332,6 +332,7 @@ class MyKSuite:
 
     id: int
     pack: str
+    pack_id: int
     status: str
     product: str
     is_free: bool
@@ -345,7 +346,8 @@ class MyKSuite:
         ts = data.get("trial_expiry_at")
         return cls(
             id=data.get("id", 0),
-            pack=data.get("pack", "Unnamed"),
+            pack=data.get("pack", ""),
+            pack_id=data.get("pack_id", 0),
             status=data.get("status", "Unknown"),
             product=data.get("product", ""),
             is_free=bool(data.get("is_free", False)),
@@ -359,6 +361,7 @@ class MyKSuite:
         return {
             "id": self.id,
             "pack": self.pack,
+            "pack_id": self.pack_id,
             "status": self.status,
             "product": self.product,
             "is_free": self.is_free,

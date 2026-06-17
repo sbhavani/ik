@@ -22,6 +22,10 @@ def _mail_status(m: MyKSuite) -> str:
     return m.status.lower() if m.status else "unknown"
 
 
+def _pack_label(m: MyKSuite) -> str:
+    return m.pack or f"#{m.pack_id}"
+
+
 def cmd_mail_ls(args: argparse.Namespace, client: KDriveClient, out=sys.stdout) -> None:
     if _is_json(args):
         out.write(json.dumps([m.to_dict() for m in client.list_my_ksuites()], indent=2) + "\n")
@@ -32,7 +36,7 @@ def cmd_mail_ls(args: argparse.Namespace, client: KDriveClient, out=sys.stdout) 
         print("No kSuite found.")
         return
 
-    pack_w = max(len(m.pack) for m in mail)
+    pack_w = max(len(_pack_label(m)) for m in mail)
     print(
         f"  {'ID':>6}  {'PACK':<{pack_w}}  {'STATUS':<10}  {'FREE':<3}  "
         f"{'RENEWAL':<10}  {'TRIAL EXPIRES':<12}"
@@ -40,9 +44,10 @@ def cmd_mail_ls(args: argparse.Namespace, client: KDriveClient, out=sys.stdout) 
     for m in mail:
         free = "Yes" if m.is_free else "No"
         trial = m.trial_expiry_at.strftime("%Y-%m-%d") if m.trial_expiry_at else "-"
+        renewal = m.has_auto_renew or "-"
         print(
-            f"  {m.id:>6}  {m.pack:<{pack_w}}  {_mail_status(m):<10}  {free:<3}  "
-            f"{m.has_auto_renew:<10}  {trial:<12}"
+            f"  {m.id:>6}  {_pack_label(m):<{pack_w}}  {_mail_status(m):<10}  {free:<3}  "
+            f"{renewal:<10}  {trial:<12}"
         )
 
 
@@ -56,13 +61,14 @@ def cmd_mail_info(args: argparse.Namespace, client: KDriveClient, out=sys.stdout
     trial = m.trial_expiry_at.strftime("%Y-%m-%d") if m.trial_expiry_at else "-"
     free = "Yes" if m.is_free else "No"
     print(f"ID:                {m.id}")
-    print(f"Pack:              {m.pack}")
+    print(f"Pack:              {_pack_label(m)}")
+    print(f"Pack ID:           {m.pack_id}")
     print(f"Status:            {_mail_status(m)}")
-    print(f"Product:           {m.product}")
+    print(f"Product:           {m.product or '-'}")
     print(f"Free:              {free}")
     print(f"Mail hosting:      {m.mail or '-'}")
     print(f"Drive hosting:     {m.drive or '-'}")
-    print(f"Auto-renew:        {m.has_auto_renew}")
+    print(f"Auto-renew:        {m.has_auto_renew or '-'}")
     print(f"Trial expires at:  {trial}")
 
 

@@ -21,6 +21,7 @@ def ns(**kwargs) -> argparse.Namespace:
 def make_my_ksuite(
     id: int = 1234,
     pack: str = "kSuite Standard",
+    pack_id: int = 7,
     status: str = "active",
     product: str = "ksuite",
     is_free: bool = False,
@@ -32,6 +33,7 @@ def make_my_ksuite(
     return MyKSuite(
         id=id,
         pack=pack,
+        pack_id=pack_id,
         status=status,
         product=product,
         is_free=is_free,
@@ -120,6 +122,30 @@ class TestCmdMailLs:
         header = [ln for ln in out.splitlines() if "PACK" in ln][0]
         assert len(header) >= len("A Much Longer Pack Name")
 
+    def test_empty_pack_falls_back_to_pack_id(self, capsys: pytest.CaptureFixture) -> None:
+        # Mirrors the live API response for a free kSuite: no `pack`
+        # string, just `pack_id`. Text view should show "#1" not "Unnamed".
+        client = Mock(spec=KDriveClient)
+        client.list_my_ksuites.return_value = [make_my_ksuite(id=492079, pack="", pack_id=1)]
+
+        cmd_mail_ls(ns(output="text"), client)
+
+        out_lines = capsys.readouterr().out.splitlines()
+        data_line = [ln for ln in out_lines if "492079" in ln][0]
+        assert "#1" in data_line
+        assert "Unnamed" not in data_line
+
+    def test_null_renewal_renders_dash(self, capsys: pytest.CaptureFixture) -> None:
+        client = Mock(spec=KDriveClient)
+        client.list_my_ksuites.return_value = [make_my_ksuite(has_auto_renew="")]
+
+        cmd_mail_ls(ns(output="text"), client)
+
+        out_lines = capsys.readouterr().out.splitlines()
+        data_line = [ln for ln in out_lines if "1234" in ln][0]
+        # Renewal column should render "-" when has_auto_renew is empty
+        assert "  -  " in f"  {data_line}  "
+
     def test_json_output(self) -> None:
         client = Mock(spec=KDriveClient)
         client.list_my_ksuites.return_value = [make_my_ksuite()]
@@ -132,6 +158,7 @@ class TestCmdMailLs:
         assert len(parsed) == 1
         assert parsed[0]["id"] == 1234
         assert parsed[0]["pack"] == "kSuite Standard"
+        assert parsed[0]["pack_id"] == 7
         assert parsed[0]["is_free"] is False
 
     def test_json_output_empty(self) -> None:
@@ -157,6 +184,7 @@ class TestCmdMailInfo:
         out = capsys.readouterr().out
         assert "ID:                1234" in out
         assert "Pack:              kSuite Standard" in out
+        assert "Pack ID:           7" in out
         assert "Status:            active" in out
         assert "Product:           ksuite" in out
         assert "Free:              No" in out
@@ -164,6 +192,22 @@ class TestCmdMailInfo:
         assert "Drive hosting:     9012" in out
         assert "Auto-renew:        enabled" in out
         assert "Trial expires at:  2025-01-15" in out
+
+    def test_empty_pack_renders_pack_id(self, capsys: pytest.CaptureFixture) -> None:
+        # Mirrors the live API response for a free kSuite: no `pack`
+        # string, just `pack_id: 1`. Text view should fall back to "#1".
+        client = Mock(spec=KDriveClient)
+        client.get_my_ksuite.return_value = make_my_ksuite(
+            pack="", pack_id=1, drive=None, mail=None
+        )
+
+        cmd_mail_info(ns(mail_id=492079, output="text"), client)
+
+        out = capsys.readouterr().out
+        assert "Pack:              #1" in out
+        assert "Pack ID:           1" in out
+        assert "Mail hosting:      -" in out
+        assert "Drive hosting:     -" in out
 
     def test_null_drive_renders_dash(self, capsys: pytest.CaptureFixture) -> None:
         client = Mock(spec=KDriveClient)
