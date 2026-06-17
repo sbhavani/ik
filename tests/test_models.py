@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from ik import Activity, Drive, File, MoveOperation, ShareLink, SharedFile, VPS
+from ik import Activity, Drive, File, MoveOperation, MyKSuite, ShareLink, SharedFile, VPS
 from ik.driver import _format_size
 
 
@@ -340,3 +340,96 @@ class TestVPSToDict:
             "created_at": "2024-01-02T03:04:05",
             "expired_at": None,
         }
+
+
+class TestMyKSuiteFromApi:
+    def test_full_payload(self, my_ksuite_dict: dict) -> None:
+        from datetime import datetime
+
+        m = MyKSuite.from_api(my_ksuite_dict)
+        assert m.id == 1234
+        assert m.pack == "kSuite Standard"
+        assert m.status == "active"
+        assert m.product == "ksuite"
+        assert m.is_free is False
+        assert m.drive == "9012"
+        assert m.mail == "5678"
+        assert m.has_auto_renew == "enabled"
+        assert m.trial_expiry_at == datetime.fromtimestamp(1736899200)
+
+    def test_empty_dict_uses_defaults(self) -> None:
+        m = MyKSuite.from_api({})
+        assert m.id == 0
+        assert m.pack == "Unnamed"
+        assert m.status == "Unknown"
+        assert m.product == ""
+        assert m.is_free is False
+        assert m.drive is None
+        assert m.mail is None
+        assert m.has_auto_renew == ""
+        assert m.trial_expiry_at is None
+
+    def test_null_trial_expiry_at_is_none(self, my_ksuite_dict: dict) -> None:
+        my_ksuite_dict["trial_expiry_at"] = None
+        m = MyKSuite.from_api(my_ksuite_dict)
+        assert m.trial_expiry_at is None
+
+    def test_null_drive_and_mail_are_none(self, my_ksuite_dict: dict) -> None:
+        my_ksuite_dict["drive"] = None
+        my_ksuite_dict["mail"] = None
+        m = MyKSuite.from_api(my_ksuite_dict)
+        assert m.drive is None
+        assert m.mail is None
+
+    def test_empty_string_drive_becomes_none(self, my_ksuite_dict: dict) -> None:
+        my_ksuite_dict["drive"] = ""
+        my_ksuite_dict["mail"] = ""
+        m = MyKSuite.from_api(my_ksuite_dict)
+        assert m.drive is None
+        assert m.mail is None
+
+
+class TestMyKSuiteToDict:
+    def test_serializes_all_fields(self) -> None:
+        from datetime import datetime
+
+        m = MyKSuite(
+            id=1,
+            pack="kSuite Free",
+            status="active",
+            product="ksuite",
+            is_free=True,
+            drive="9012",
+            mail="5678",
+            has_auto_renew="disabled",
+            trial_expiry_at=datetime(2024, 6, 1, 12, 0, 0),
+        )
+        d = m.to_dict()
+        assert d == {
+            "id": 1,
+            "pack": "kSuite Free",
+            "status": "active",
+            "product": "ksuite",
+            "is_free": True,
+            "drive": "9012",
+            "mail": "5678",
+            "has_auto_renew": "disabled",
+            "trial_expiry_at": "2024-06-01T12:00:00",
+        }
+
+    def test_none_fields(self) -> None:
+        m = MyKSuite(
+            id=0,
+            pack="",
+            status="",
+            product="",
+            is_free=False,
+            drive=None,
+            mail=None,
+            has_auto_renew="",
+            trial_expiry_at=None,
+        )
+        d = m.to_dict()
+        assert d["drive"] is None
+        assert d["mail"] is None
+        assert d["trial_expiry_at"] is None

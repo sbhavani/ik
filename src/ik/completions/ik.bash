@@ -15,7 +15,8 @@ except Exception:
 
 _ik_drive_subcmds="ls tree mkdir upload download search rm info mv cp share trash activity"
 _ik_vps_subcmds="ls info"
-_ik_top_subcmds="configure whoami drives drive vps completion"
+_ik_mail_subcmds="ls info"
+_ik_top_subcmds="configure whoami drives drive vps mail completion"
 _ik_shells="bash zsh fish"
 
 _ik() {
@@ -51,6 +52,7 @@ _ik() {
         drive)         COMPREPLY=($(compgen -W "$_ik_drive_subcmds" -- "$cur")) ;;
         drive:*)       COMPREPLY=() ;;
         vps)           COMPREPLY=($(compgen -W "$_ik_vps_subcmds" -- "$cur")) ;;
+        mail)          COMPREPLY=($(compgen -W "$_ik_mail_subcmds" -- "$cur")) ;;
         "")            COMPREPLY=($(compgen -W "$_ik_top_subcmds" -- "$cur")) ;;
         *)             COMPREPLY=() ;;
     esac

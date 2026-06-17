@@ -17,6 +17,7 @@ complete -c ik -n "__fish_use_subcommand" -a "whoami"      -d "Show current user
 complete -c ik -n "__fish_use_subcommand" -a "drives"      -d "List all kDrives"
 complete -c ik -n "__fish_use_subcommand" -a "drive"       -d "kDrive commands"
 complete -c ik -n "__fish_use_subcommand" -a "vps"         -d "VPS Cloud commands"
+complete -c ik -n "__fish_use_subcommand" -a "mail"        -d "Mail (kSuite) commands"
 complete -c ik -n "__fish_use_subcommand" -a "completion"  -d "Print shell completion script"
 
 # Drive subcommands.
@@ -24,6 +25,9 @@ complete -c ik -n "__fish_seen_subcommand_from drive" -a "ls tree mkdir upload d
 
 # VPS subcommands.
 complete -c ik -n "__fish_seen_subcommand_from vps" -a "ls info"
+
+# Mail subcommands.
+complete -c ik -n "__fish_seen_subcommand_from mail" -a "ls info"
 
 # `ik completion` shells.
 complete -c ik -n "__fish_seen_subcommand_from completion" -a "bash zsh fish"

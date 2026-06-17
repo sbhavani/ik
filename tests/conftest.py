@@ -87,3 +87,22 @@ def vps_dict() -> dict[str, Any]:
             "billing_end_at": 1736850600,
         },
     }
+
+
+@pytest.fixture
+def my_ksuite_dict() -> dict[str, Any]:
+    return {
+        "id": 1234,
+        "status": "active",
+        "pack_id": 7,
+        "trial_expiry_at": 1736899200,  # 2025-01-15
+        "pack": "kSuite Standard",
+        "is_free": False,
+        "drive": "9012",
+        "mail": "5678",
+        "has_auto_renew": "enabled",
+        "can_trial": False,
+        "product": "ksuite",
+        "children": None,
+        "data": [],
+    }

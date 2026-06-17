@@ -13,6 +13,7 @@ from typing import Any
 
 from . import KDriveClient, KDriveError
 from .driver import add_drive_commands
+from .mail import add_mail_commands
 from .vps import add_vps_commands
 
 CONFIG_DIR = os.path.expanduser("~/.config/ik")
@@ -419,6 +420,9 @@ def main() -> None:
     # vps subcommands
     add_vps_commands(sub, GLOBAL_SUB)
 
+    # mail subcommands
+    add_mail_commands(sub, GLOBAL_SUB)
+
     # completion
     completion_p = sub.add_parser(
         "completion",
@@ -495,6 +499,11 @@ def main() -> None:
         except KDriveError as e:
             sys.exit(f"Error: {e}")
     elif args.cmd == "vps":
+        try:
+            args.func(args, client)
+        except KDriveError as e:
+            sys.exit(f"Error: {e}")
+    elif args.cmd == "mail":
         try:
             args.func(args, client)
         except KDriveError as e:

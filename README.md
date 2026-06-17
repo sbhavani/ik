@@ -1,7 +1,7 @@
 # ik
 
 > AWS CLI-style command-line tool for [Infomaniak Cloud Services](https://www.infomaniak.com/).
-> Drive kDrive, VPS Cloud, and more — from your terminal, in scripts, in CI.
+> Drive kDrive, VPS Cloud, Mail (kSuite), and more — from your terminal, in scripts, in CI.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
@@ -17,7 +17,7 @@
 - **Scriptable** — every command works non-interactively. Machine-parseable JSON output. Stable exit codes.
 - **AWS-style** — `ik <service> <action> <resource>`, `--output json`, profiles in `~/.config/ik/config.json`. Anyone who has used `aws` is productive in minutes.
 - **Thin and honest** — a well-typed wrapper over the Infomaniak REST API. It does not invent abstractions the API does not provide, and it does not silently retry or coalesce operations.
-- **Multi-service** — kDrive today (browse, search, upload, download, share, trash, activity), VPS Cloud (list, info). More services on the roadmap.
+- **Multi-service** — kDrive today (browse, search, upload, download, share, trash, activity), VPS Cloud (list, info), Mail / kSuite (list, info). More services on the roadmap.
 - **Single runtime dependency** — only `requests`. No transitive surprises.
 
 ---
@@ -32,6 +32,7 @@
   - [Account](#account)
   - [kDrive](#kdrive)
   - [VPS Cloud](#vps-cloud)
+  - [Mail (kSuite)](#mail-ksuite)
 - [Output](#output)
 - [Design](#design)
 - [Roadmap](#roadmap)
@@ -272,6 +273,30 @@ $ ik vps ls
     1003  Frozen            locked               0         -  2023-11-20
 ```
 
+### Mail (kSuite)
+
+```
+ik mail <subcommand> [args]
+```
+
+| Subcommand    | Description                       |
+| ------------- | --------------------------------- |
+| `ls`          | List current kSuite service       |
+| `info <id>`   | Show details for one kSuite       |
+
+This is a thin read-only slice: it shows the kSuite service container
+that sits behind your Infomaniak mail subscription. Mailbox-level and
+message-level commands (read mail, attachments, etc.) are follow-up
+slices.
+
+Example:
+
+```bash
+$ ik mail ls
+      ID  PACK                STATUS      FREE  RENEWAL     TRIAL EXPIRES
+    1234  kSuite Standard     active      No    enabled     2027-01-15
+```
+
 ---
 
 ## Output
@@ -337,7 +362,8 @@ src/ik/
 ├── __init__.py        # KDriveClient — pure HTTP wrapper over the Infomaniak REST API
 ├── cli.py             # argparse shell — top-level commands, config resolution, dispatch
 ├── driver/__init__.py # `ik drive ...` subcommands
-└── vps/__init__.py    # `ik vps ...` subcommands
+├── vps/__init__.py    # `ik vps ...` subcommands
+└── mail/__init__.py   # `ik mail ...` subcommands
 ```
 
 - **API client** — no `print`, no `sys.exit`, no `argparse`. Returns dataclasses. Raises `KDriveError` on failure.
@@ -360,7 +386,7 @@ API conventions:
 - **v0.1 — Alpha** *(shipped)* — kDrive read/write surface, interactive `configure`, Python 3.10+, single dependency.
 - **v0.2 — Usability** — `--output json|text` everywhere, `--quiet`/`--yes`, progress bars, resumable uploads.
 - **v0.3 — Operations** — **configuration profiles** *(shipped)*, `ik drive sync local remote` (one-way mirror), trash management, usage reports.
-- **v0.4 — Beyond kDrive** — **VPS Cloud commands** *(shipped: `ls`, `info`)*, Mail, Hosting, Domains.
+- **v0.4 — Beyond kDrive** — **VPS Cloud commands** *(shipped: `ls`, `info`)*, **Mail (kSuite) commands** *(shipped: `ls`, `info`, thin slice)*, Hosting, Domains.
 - **v1.0 — Stable** — frozen API, tab completion, docs site, distribution wheels for PyPI / Homebrew / Linux packages.
 
 The full roadmap, including deferred items, is in [`docs/PRD.md`](./docs/PRD.md).

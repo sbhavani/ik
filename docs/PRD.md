@@ -192,7 +192,7 @@ ik/
 
 **Layering:**
 1. **API client** (`src/ik/__init__.py`) — pure HTTP wrapper over the Infomaniak REST API. Returns dataclasses (`Drive`, `File`). Knows nothing about CLI.
-2. **Service commands** (`src/ik/driver/__init__.py`, future `mail/`, `hosting/`) — one module per Infomaniak service. Each exposes a `add_<service>_commands(parser)` function that wires subcommands and dispatches to a `KDriveClient` method.
+2. **Service commands** (`src/ik/driver/__init__.py`, `src/ik/vps/`, `src/ik/mail/`, future `hosting/`) — one module per Infomaniak service. Each exposes a `add_<service>_commands(parser)` function that wires subcommands and dispatches to a `KDriveClient` method.
 3. **CLI shell** (`src/ik/cli.py`) — `argparse` setup, config resolution, top-level commands (`configure`, `whoami`, `drives`), and dispatch.
 
 This layering means adding a new service (e.g. mail) is a new module under `src/ik/mail/` plus a single line in `cli.py`.
@@ -227,7 +227,7 @@ This layering means adding a new service (e.g. mail) is a new module under `src/
 - Configuration profiles (`ik configure --profile work`) **(shipped in 0.3.0)**
 
 ### v0.4 — Beyond kDrive
-- Mail service (`ik mail ...`) — list mailboxes, read messages
+- Mail service (`ik mail ...`) — list mailboxes, read messages **(shipped in 0.4.0, thin slice: `ls`, `info`)**
 - Hosting service (`ik hosting ...`) — manage web hosting
 - VPS service (`ik vps ...`) — manage Public Cloud / VPS instances **(shipped in 0.4.0, thin slice: `ls`, `info`)**
 - Domains service (`ik domain ...`)

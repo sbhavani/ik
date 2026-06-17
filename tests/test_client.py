@@ -829,3 +829,46 @@ class TestPublicClouds:
         assert v.name == "My VPS Cloud"
         assert v.description == "Production environment"
         assert "/1/public_clouds/1001" in session.request.call_args.args[1]
+
+
+class TestMyKSuite:
+    def test_list_my_ksuites(self, my_ksuite_dict: dict) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(200, {"data": my_ksuite_dict})
+        client = make_client(session)
+
+        mail = client.list_my_ksuites()
+
+        assert len(mail) == 1
+        assert mail[0].id == 1234
+        assert mail[0].pack == "kSuite Standard"
+        assert mail[0].mail == "5678"
+        assert "/1/my_ksuite/current" in session.request.call_args.args[1]
+        assert session.request.call_args.args[0] == "GET"
+
+    def test_list_my_ksuites_empty_when_no_data(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(200, {"data": None})
+        client = make_client(session)
+
+        assert client.list_my_ksuites() == []
+
+    def test_list_my_ksuites_empty_when_response_has_no_data_key(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(200, {})
+        client = make_client(session)
+
+        assert client.list_my_ksuites() == []
+
+    def test_get_my_ksuite(self, my_ksuite_dict: dict) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(200, {"data": my_ksuite_dict})
+        client = make_client(session)
+
+        m = client.get_my_ksuite(1234)
+
+        assert m.id == 1234
+        assert m.pack == "kSuite Standard"
+        assert m.is_free is False
+        assert "/1/my_ksuite/1234" in session.request.call_args.args[1]
+        assert session.request.call_args.args[0] == "GET"

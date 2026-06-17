@@ -20,6 +20,7 @@ _ik() {
         'drives:List all kDrives'
         'drive:kDrive commands'
         'vps:VPS Cloud commands'
+        'mail:Mail (kSuite) commands'
         'completion:Print shell completion script'
     )
 
@@ -46,6 +47,12 @@ _ik() {
         'info:Show VPS details'
     )
 
+    local -a mail_subcommands
+    mail_subcommands=(
+        'ls:List current kSuite'
+        'info:Show kSuite details'
+    )
+
     local -a shells
     shells=('bash' 'zsh' 'fish')
 
@@ -66,6 +73,7 @@ _ik() {
             case ${words[1]} in
                 drive)      _describe 'drive command' drive_subcommands ;;
                 vps)        _describe 'vps command' vps_subcommands ;;
+                mail)       _describe 'mail command' mail_subcommands ;;
                 completion) _describe 'shell' shells ;;
             esac
             ;;

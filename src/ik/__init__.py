@@ -321,6 +321,54 @@ class VPS:
         }
 
 
+@dataclass
+class MyKSuite:
+    """A kSuite (mail) service container.
+
+    In Infomaniak's API a "MyKSuite" is the service container for a
+    kSuite mail subscription. It is the mail analog of a VPS
+    public-cloud container.
+    """
+
+    id: int
+    pack: str
+    status: str
+    product: str
+    is_free: bool
+    drive: str | None
+    mail: str | None
+    has_auto_renew: str
+    trial_expiry_at: datetime | None
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> MyKSuite:
+        ts = data.get("trial_expiry_at")
+        return cls(
+            id=data.get("id", 0),
+            pack=data.get("pack", "Unnamed"),
+            status=data.get("status", "Unknown"),
+            product=data.get("product", ""),
+            is_free=bool(data.get("is_free", False)),
+            drive=data.get("drive") or None,
+            mail=data.get("mail") or None,
+            has_auto_renew=data.get("has_auto_renew", ""),
+            trial_expiry_at=datetime.fromtimestamp(ts) if ts else None,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "pack": self.pack,
+            "status": self.status,
+            "product": self.product,
+            "is_free": self.is_free,
+            "drive": self.drive,
+            "mail": self.mail,
+            "has_auto_renew": self.has_auto_renew,
+            "trial_expiry_at": self.trial_expiry_at.isoformat() if self.trial_expiry_at else None,
+        }
+
+
 _UNSET: Any = object()
 """Sentinel for distinguishing 'argument not passed' from 'argument is None'.
 
@@ -796,6 +844,24 @@ class KDriveClient:
         """Get details of a specific VPS Cloud service."""
         body = self._request("GET", f"/1/public_clouds/{public_cloud_id}")
         return VPS.from_api(body.get("data", {}))
+
+    # ── Mail / kSuite ───────────────────────────────────────────────────
+
+    def list_my_ksuites(self) -> list[MyKSuite]:
+        """List the calling user's current kSuite (0 or 1).
+
+        The /1/my_ksuite/current endpoint returns a single kSuite
+        object, not an array; the user has at most one "current"
+        kSuite.
+        """
+        body = self._request("GET", "/1/my_ksuite/current")
+        data = body.get("data")
+        return [MyKSuite.from_api(data)] if data else []
+
+    def get_my_ksuite(self, my_k_suite_id: int) -> MyKSuite:
+        """Get details of a specific kSuite by id."""
+        body = self._request("GET", f"/1/my_ksuite/{my_k_suite_id}")
+        return MyKSuite.from_api(body.get("data", {}))
 
 
 class KDriveError(Exception):
