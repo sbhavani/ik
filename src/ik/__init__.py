@@ -372,6 +372,219 @@ class MyKSuite:
         }
 
 
+@dataclass
+class Mailbox:
+    """A mailbox / folder inside a mail hosting.
+
+    Endpoint shapes are inferred — the local OpenAPI spec does not
+    document mailbox listing. Safe defaults are used so missing
+    fields degrade to empty / zero rather than crash.
+    """
+
+    id: int
+    name: str
+    parent_id: int | None = None
+    unread_count: int = 0
+    message_count: int = 0
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> Mailbox:
+        return cls(
+            id=data.get("id", 0),
+            name=data.get("name", "Unnamed"),
+            parent_id=data.get("parent_id"),
+            unread_count=data.get("unread_count", 0),
+            message_count=data.get("message_count", 0),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "parent_id": self.parent_id,
+            "unread_count": self.unread_count,
+            "message_count": self.message_count,
+        }
+
+
+@dataclass
+class Message:
+    """Message metadata (headers + flags, no body).
+
+    `from_` carries the trailing underscore so the JSON contract can
+    keep the natural `"from"` key without colliding with the Python
+    keyword. `to` and `cc` are lists; the parser splits semicolon-
+    separated strings if the API returns a single string.
+    """
+
+    id: int
+    mailbox_id: int
+    from_: str
+    to: list[str]
+    cc: list[str]
+    subject: str
+    date: datetime | None
+    has_attachments: bool
+    size: int
+    snippet: str | None
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any], mailbox_id: int = 0) -> Message:
+        def split_addrs(v: Any) -> list[str]:
+            if isinstance(v, list):
+                return [str(x) for x in v if x]
+            if isinstance(v, str):
+                return [a.strip() for a in v.split(";") if a.strip()]
+            return []
+
+        from_ = data.get("from", "")
+        if isinstance(from_, dict):
+            from_ = from_.get("email") or from_.get("address") or str(from_)
+
+        ts = data.get("date")
+        return cls(
+            id=data.get("id", 0),
+            mailbox_id=data.get("mailbox_id", mailbox_id),
+            from_=str(from_),
+            to=split_addrs(data.get("to", [])),
+            cc=split_addrs(data.get("cc", [])),
+            subject=data.get("subject", ""),
+            date=datetime.fromtimestamp(ts) if ts else None,
+            has_attachments=bool(data.get("has_attachments", False)),
+            size=data.get("size", 0),
+            snippet=data.get("snippet"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "mailbox_id": self.mailbox_id,
+            "from": self.from_,
+            "to": self.to,
+            "cc": self.cc,
+            "subject": self.subject,
+            "date": self.date.isoformat() if self.date else None,
+            "has_attachments": self.has_attachments,
+            "size": self.size,
+            "snippet": self.snippet,
+        }
+
+
+@dataclass
+class Attachment:
+    """A single attachment inside a `MessageBody`.
+
+    The binary payload itself is not stored on the dataclass — it
+    lives in `MessageBody.raw_mime`. `save_to(path)` is the helper
+    that decodes and writes a specific attachment.
+    """
+
+    filename: str
+    mime_type: str
+    size: int
+
+
+@dataclass
+class MessageBody:
+    """Full message: headers, decoded text bodies, attachments.
+
+    `raw_mime` holds the original RFC 822 bytes so `--raw` output
+    and `save_attachment()` don't need to re-fetch the message.
+    """
+
+    id: int
+    mailbox_id: int
+    from_: str
+    to: list[str]
+    cc: list[str]
+    subject: str
+    date: datetime | None
+    body_text: str
+    body_html: str | None
+    attachments: list[Attachment]
+    raw_mime: bytes
+
+    @classmethod
+    def from_mime(cls, raw: bytes, mailbox_id: int, msg_id: int) -> MessageBody:
+        """Parse an RFC 822 / MIME byte string into a MessageBody."""
+        import email as _email
+        from email.policy import default as _default_policy
+        from email.utils import getaddresses, parsedate_to_datetime
+
+        msg = _email.message_from_bytes(raw, policy=_default_policy)
+
+        body_text = ""
+        body_html: str | None = None
+        attachments: list[Attachment] = []
+
+        for part in msg.walk():
+            if part.is_multipart():
+                continue
+            disp = part.get_content_disposition()
+            if disp == "attachment":
+                filename = part.get_filename() or "untitled"
+                payload = part.get_payload(decode=True) or b""
+                attachments.append(
+                    Attachment(
+                        filename=filename,
+                        mime_type=part.get_content_type(),
+                        size=len(payload),
+                    )
+                )
+                continue
+
+            ctype = part.get_content_type()
+            content = part.get_content()
+            if ctype == "text/plain" and not body_text:
+                body_text = content or ""
+            elif ctype == "text/html" and body_html is None:
+                body_html = content or None
+
+        date: datetime | None = None
+        date_str = msg.get("Date")
+        if date_str:
+            try:
+                date = parsedate_to_datetime(date_str)
+            except (TypeError, ValueError):
+                date = None
+
+        from_str = msg.get("From", "")
+        from_ = getaddresses([from_str])[0][1] if from_str else ""
+        to = [addr for _, addr in getaddresses(msg.get_all("To") or []) if addr]
+        cc = [addr for _, addr in getaddresses(msg.get_all("Cc") or []) if addr]
+
+        return cls(
+            id=msg_id,
+            mailbox_id=mailbox_id,
+            from_=from_,
+            to=to,
+            cc=cc,
+            subject=msg.get("Subject", ""),
+            date=date,
+            body_text=body_text,
+            body_html=body_html,
+            attachments=attachments,
+            raw_mime=raw,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "mailbox_id": self.mailbox_id,
+            "from": self.from_,
+            "to": self.to,
+            "cc": self.cc,
+            "subject": self.subject,
+            "date": self.date.isoformat() if self.date else None,
+            "body_text": self.body_text,
+            "body_html": self.body_html,
+            "attachments": [
+                {"filename": a.filename, "mime_type": a.mime_type, "size": a.size}
+                for a in self.attachments
+            ],
+        }
+
+
 _UNSET: Any = object()
 """Sentinel for distinguishing 'argument not passed' from 'argument is None'.
 
@@ -865,6 +1078,52 @@ class KDriveClient:
         """Get details of a specific kSuite by id."""
         body = self._request("GET", f"/1/my_ksuite/{my_k_suite_id}")
         return MyKSuite.from_api(body.get("data", {}))
+
+    def _raw_request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
+        """Like `_request`, but returns the raw `Response` (no JSON parse).
+
+        Used for binary responses (e.g. RFC 822 message source). Raises
+        `KDriveError` on non-2xx; on success the caller can read
+        `resp.content` directly.
+        """
+        url = f"{API_BASE}{path}"
+        resp = self.session.request(method, url, **kwargs)
+        if resp.status_code >= 400:
+            try:
+                err = resp.json().get("error", {})
+                code = err.get("code", resp.status_code)
+                desc = err.get("description", resp.text[:200])
+            except ValueError:
+                code = resp.status_code
+                desc = resp.text[:200]
+            raise KDriveError(f"API Error ({code}): {desc}")
+        return resp
+
+    def list_mailboxes(self, mail_hosting_id: int) -> list[Mailbox]:
+        """List mailbox folders inside a mail hosting.
+
+        Endpoint shapes are inferred from the PRD (no spec coverage).
+        """
+        body = self._request("GET", f"/1/mail_hostings/{mail_hosting_id}/mailboxes")
+        return [Mailbox.from_api(d) for d in body.get("data", [])]
+
+    def list_messages(self, mail_hosting_id: int, mailbox_id: int) -> Iterator[Message]:
+        """List messages in a mailbox, following cursors transparently."""
+        path = f"/1/mail_hostings/{mail_hosting_id}/mailboxes/{mailbox_id}/messages"
+        params: dict | None = None
+        while True:
+            body = self._request("GET", path, params=params)
+            for d in body.get("data", []):
+                yield Message.from_api(d, mailbox_id=mailbox_id)
+            if not body.get("has_more"):
+                return
+            params = {"cursor": body.get("cursor")}
+
+    def get_message(self, mail_hosting_id: int, mailbox_id: int, msg_id: int) -> MessageBody:
+        """Fetch the raw MIME source for one message and parse it."""
+        path = f"/1/mail_hostings/{mail_hosting_id}/mailboxes/{mailbox_id}/messages/{msg_id}"
+        resp = self._raw_request("GET", path)
+        return MessageBody.from_mime(resp.content, mailbox_id, msg_id)
 
 
 class KDriveError(Exception):

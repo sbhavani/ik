@@ -484,6 +484,13 @@ def main() -> None:
         default_drive = (config.get("profiles") or {}).get(profile, {}).get("default_drive")
         if default_drive is not None:
             args.default_drive = default_drive
+        # Inject default_mail for mail subcommands that need a hosting id.
+        # Only present when a subcommand like mailboxes/messages/message
+        # was selected (those subparsers declare the arg; others don't).
+        if getattr(args, "mail_hosting_id", None) is None:
+            default_mail = (config.get("profiles") or {}).get(profile, {}).get("default_mail")
+            if default_mail is not None:
+                args.mail_hosting_id = default_mail
 
     # Create client
     client = KDriveClient(token)

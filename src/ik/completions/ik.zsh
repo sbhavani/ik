@@ -51,6 +51,9 @@ _ik() {
     mail_subcommands=(
         'ls:List current kSuite'
         'info:Show kSuite details'
+        'mailboxes:List mailbox folders'
+        'messages:List messages in a mailbox'
+        'message:Read one message'
     )
 
     local -a shells

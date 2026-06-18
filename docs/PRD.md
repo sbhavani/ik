@@ -227,7 +227,7 @@ This layering means adding a new service (e.g. mail) is a new module under `src/
 - Configuration profiles (`ik configure --profile work`) **(shipped in 0.3.0)**
 
 ### v0.4 — Beyond kDrive
-- Mail service (`ik mail ...`) — list mailboxes, read messages **(shipped in 0.4.0, thin slice: `ls`, `info`)**
+- Mail service (`ik mail ...`) — list mailboxes, read messages **(shipped in 0.4.0: `ls`, `info`, `mailboxes`, `messages`, `message` with MIME/attachment support)**
 - Hosting service (`ik hosting ...`) — manage web hosting
 - VPS service (`ik vps ...`) — manage Public Cloud / VPS instances **(shipped in 0.4.0, thin slice: `ls`, `info`)**
 - Domains service (`ik domain ...`)

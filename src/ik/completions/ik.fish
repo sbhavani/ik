@@ -27,7 +27,7 @@ complete -c ik -n "__fish_seen_subcommand_from drive" -a "ls tree mkdir upload d
 complete -c ik -n "__fish_seen_subcommand_from vps" -a "ls info"
 
 # Mail subcommands.
-complete -c ik -n "__fish_seen_subcommand_from mail" -a "ls info"
+complete -c ik -n "__fish_seen_subcommand_from mail" -a "ls info mailboxes messages message"
 
 # `ik completion` shells.
 complete -c ik -n "__fish_seen_subcommand_from completion" -a "bash zsh fish"

@@ -6,7 +6,19 @@ from datetime import datetime
 
 import pytest
 
-from ik import Activity, Drive, File, MoveOperation, MyKSuite, ShareLink, SharedFile, VPS
+from ik import (
+    Activity,
+    Drive,
+    File,
+    Mailbox,
+    Message,
+    MessageBody,
+    MoveOperation,
+    MyKSuite,
+    ShareLink,
+    SharedFile,
+    VPS,
+)
 from ik.driver import _format_size
 
 
@@ -457,3 +469,170 @@ class TestMyKSuiteToDict:
         assert d["drive"] is None
         assert d["mail"] is None
         assert d["trial_expiry_at"] is None
+
+
+class TestMailboxFromApi:
+    def test_full_payload(self) -> None:
+        b = Mailbox.from_api(
+            {
+                "id": 1,
+                "name": "INBOX",
+                "parent_id": None,
+                "unread_count": 3,
+                "message_count": 42,
+            }
+        )
+        assert b.id == 1
+        assert b.name == "INBOX"
+        assert b.parent_id is None
+        assert b.unread_count == 3
+        assert b.message_count == 42
+
+    def test_nested_folder(self) -> None:
+        b = Mailbox.from_api({"id": 4, "name": "Project X", "parent_id": 1})
+        assert b.parent_id == 1
+        assert b.unread_count == 0
+        assert b.message_count == 0
+
+    def test_empty_dict_uses_defaults(self) -> None:
+        b = Mailbox.from_api({})
+        assert b.id == 0
+        assert b.name == "Unnamed"
+        assert b.parent_id is None
+        assert b.unread_count == 0
+        assert b.message_count == 0
+
+
+class TestMailboxToDict:
+    def test_serializes_all_fields(self) -> None:
+        b = Mailbox(id=1, name="INBOX", parent_id=None, unread_count=3, message_count=42)
+        d = b.to_dict()
+        assert d == {
+            "id": 1,
+            "name": "INBOX",
+            "parent_id": None,
+            "unread_count": 3,
+            "message_count": 42,
+        }
+
+
+class TestMessageFromApi:
+    def test_full_payload(self) -> None:
+        m = Message.from_api(
+            {
+                "id": 100,
+                "mailbox_id": 1,
+                "from": "alice@example.com",
+                "to": ["bob@example.com", "carol@example.com"],
+                "cc": [],
+                "subject": "Re: Q3 plan",
+                "date": 1736899200,
+                "has_attachments": True,
+                "size": 12400,
+                "snippet": "Sounds good to me...",
+            }
+        )
+        assert m.id == 100
+        assert m.from_ == "alice@example.com"
+        assert m.to == ["bob@example.com", "carol@example.com"]
+        assert m.subject == "Re: Q3 plan"
+        assert m.has_attachments is True
+        assert m.size == 12400
+        assert m.snippet == "Sounds good to me..."
+
+    def test_addrs_as_string_split_on_semicolon(self) -> None:
+        m = Message.from_api(
+            {
+                "id": 1,
+                "from": "a@x.com",
+                "to": "a@x.com; b@x.com;  c@x.com",
+            }
+        )
+        assert m.to == ["a@x.com", "b@x.com", "c@x.com"]
+
+    def test_from_as_dict(self) -> None:
+        m = Message.from_api({"id": 1, "from": {"email": "a@x.com"}})
+        assert m.from_ == "a@x.com"
+
+    def test_missing_date_is_none(self) -> None:
+        m = Message.from_api({"id": 1})
+        assert m.date is None
+
+    def test_mailbox_id_falls_back_to_kwarg(self) -> None:
+        m = Message.from_api({"id": 100}, mailbox_id=7)
+        assert m.mailbox_id == 7
+
+
+class TestMessageToDict:
+    def test_serializes_all_fields(self) -> None:
+        from datetime import datetime
+
+        m = Message(
+            id=1,
+            mailbox_id=7,
+            from_="a@x.com",
+            to=["b@x.com"],
+            cc=[],
+            subject="hi",
+            date=datetime(2026, 1, 1),
+            has_attachments=False,
+            size=100,
+            snippet="hello",
+        )
+        d = m.to_dict()
+        assert d["from"] == "a@x.com"
+        assert d["date"] == "2026-01-01T00:00:00"
+        assert d["to"] == ["b@x.com"]
+
+
+class TestMessageBodyFromMime:
+    def test_plain_message(
+        self,
+        plain_eml: bytes,  # noqa: ARG002 - pytest fixture
+    ) -> None:
+        body = MessageBody.from_mime(plain_eml, mailbox_id=1, msg_id=42)
+        assert body.id == 42
+        assert body.mailbox_id == 1
+        assert body.from_ == "alice@example.com"
+        assert body.to == ["bob@example.com"]
+        assert body.cc == []
+        assert body.subject == "Quick question"
+        assert body.date is not None
+        assert body.date.year == 2026
+        assert "Are we still on for the 3pm?" in body.body_text
+        assert body.body_html is None
+        assert body.attachments == []
+
+    def test_multipart_alternative(
+        self,
+        multipart_eml: bytes,  # noqa: ARG002
+    ) -> None:
+        body = MessageBody.from_mime(multipart_eml, mailbox_id=1, msg_id=42)
+        assert "Plain version" in body.body_text
+        assert body.body_html is not None
+        assert "<b>message</b>" in body.body_html
+        assert body.cc == ["carol@example.com"]
+
+    def test_with_attachment(
+        self,
+        with_attachment_eml: bytes,  # noqa: ARG002
+    ) -> None:
+        body = MessageBody.from_mime(with_attachment_eml, mailbox_id=1, msg_id=42)
+        assert "quarterly report" in body.body_text
+        assert len(body.attachments) == 1
+        a = body.attachments[0]
+        assert a.filename == "report.pdf"
+        assert a.mime_type == "application/pdf"
+        # Base64 decoded payload length
+        assert a.size > 0
+
+    def test_no_body(self) -> None:
+        eml = b"From: a@x.com\nTo: b@x.com\nSubject: empty\n\n"
+        body = MessageBody.from_mime(eml, mailbox_id=1, msg_id=42)
+        assert body.body_text == ""
+        assert body.body_html is None
+        assert body.attachments == []
+
+    def test_raw_mime_preserved(self, plain_eml: bytes) -> None:
+        body = MessageBody.from_mime(plain_eml, mailbox_id=1, msg_id=42)
+        assert body.raw_mime == plain_eml

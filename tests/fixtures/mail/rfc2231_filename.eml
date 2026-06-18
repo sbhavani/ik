@@ -1,0 +1,27 @@
+From: alice@example.com
+To: bob@example.com
+Subject: Spreadsheet
+Date: Thu, 18 Jun 2026 11:30:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="RFC2231BOUND"
+
+--RFC2231BOUND
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Bob,
+
+Spreadsheet attached.
+
+--RFC2231BOUND
+Content-Type: application/vnd.ms-excel;
+	name*0="Q2 2026 financ";
+	name*1="ial.xlsx"
+Content-Disposition: attachment;
+	filename*0="Q2 2026 financ";
+	filename*1="ial.xlsx"
+Content-Transfer-Encoding: base64
+
+UEsDBBQ=
+
+--RFC2231BOUND--

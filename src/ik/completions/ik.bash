@@ -15,7 +15,7 @@ except Exception:
 
 _ik_drive_subcmds="ls tree mkdir upload download search rm info mv cp share trash activity"
 _ik_vps_subcmds="ls info"
-_ik_mail_subcmds="ls info"
+_ik_mail_subcmds="ls info mailboxes messages message"
 _ik_top_subcmds="configure whoami drives drive vps mail completion"
 _ik_shells="bash zsh fish"
 

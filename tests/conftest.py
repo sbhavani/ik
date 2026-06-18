@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
 import pytest
 import requests
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def make_response(
@@ -106,3 +109,30 @@ def my_ksuite_dict() -> dict[str, Any]:
         "children": None,
         "data": [],
     }
+
+
+# ── Mail fixtures ────────────────────────────────────────────────────
+
+
+def _read_eml(name: str) -> bytes:
+    return (FIXTURES_DIR / "mail" / name).read_bytes()
+
+
+@pytest.fixture
+def plain_eml() -> bytes:
+    return _read_eml("plain.eml")
+
+
+@pytest.fixture
+def multipart_eml() -> bytes:
+    return _read_eml("multipart.eml")
+
+
+@pytest.fixture
+def with_attachment_eml() -> bytes:
+    return _read_eml("with_attachment.eml")
+
+
+@pytest.fixture
+def rfc2231_filename_eml() -> bytes:
+    return _read_eml("rfc2231_filename.eml")

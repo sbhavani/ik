@@ -1,0 +1,21 @@
+From: alice@example.com
+To: bob@example.com
+Cc: carol@example.com
+Subject: Mixed content
+Date: Tue, 16 Jun 2026 14:22:01 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="BOUNDARY"
+
+--BOUNDARY
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Plain version of the message.
+
+--BOUNDARY
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+<html><body><p>HTML version of the <b>message</b>.</p></body></html>
+
+--BOUNDARY--

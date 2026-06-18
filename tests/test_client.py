@@ -8,7 +8,7 @@ import pytest
 import requests
 
 from ik import KDriveClient, KDriveError, MoveOperation, ShareLink
-from tests.conftest import make_response
+from tests.conftest import FIXTURES_DIR, make_response
 
 
 def make_client(session_mock: Mock) -> KDriveClient:
@@ -872,3 +872,134 @@ class TestMyKSuite:
         assert m.is_free is False
         assert "/1/my_ksuite/1234" in session.request.call_args.args[1]
         assert session.request.call_args.args[0] == "GET"
+
+
+class TestListMailboxes:
+    def test_returns_mailboxes(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200,
+            {
+                "data": [
+                    {"id": 1, "name": "INBOX", "unread_count": 3, "message_count": 42},
+                    {"id": 2, "name": "Sent", "unread_count": 0, "message_count": 18},
+                ]
+            },
+        )
+        client = make_client(session)
+
+        boxes = client.list_mailboxes(99)
+
+        assert len(boxes) == 2
+        assert boxes[0].name == "INBOX"
+        assert boxes[0].unread_count == 3
+        assert boxes[1].name == "Sent"
+        assert "/1/mail_hostings/99/mailboxes" in session.request.call_args.args[1]
+
+    def test_empty_returns_empty_list(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(200, {"data": []})
+        client = make_client(session)
+
+        assert client.list_mailboxes(99) == []
+
+
+class TestListMessages:
+    def test_yields_messages(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = make_response(
+            200,
+            {
+                "data": [
+                    {
+                        "id": 100,
+                        "from": "a@x.com",
+                        "to": ["b@x.com"],
+                        "subject": "hello",
+                        "date": 1736899200,
+                        "has_attachments": False,
+                        "size": 1024,
+                    },
+                    {
+                        "id": 101,
+                        "from": "b@x.com",
+                        "to": ["a@x.com"],
+                        "subject": "re: hello",
+                        "has_attachments": True,
+                        "size": 4096,
+                    },
+                ]
+            },
+        )
+        client = make_client(session)
+
+        msgs = list(client.list_messages(99, mailbox_id=1))
+
+        assert len(msgs) == 2
+        assert msgs[0].id == 100
+        assert msgs[0].mailbox_id == 1
+        assert msgs[1].has_attachments is True
+        assert "/1/mail_hostings/99/mailboxes/1/messages" in session.request.call_args.args[1]
+
+    def test_follows_cursor(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.side_effect = [
+            make_response(
+                200,
+                {
+                    "data": [{"id": 100, "from": "a", "subject": "x", "size": 1}],
+                    "has_more": True,
+                    "cursor": "C1",
+                },
+            ),
+            make_response(
+                200,
+                {"data": [{"id": 101, "from": "b", "subject": "y", "size": 2}]},
+            ),
+        ]
+        client = make_client(session)
+
+        msgs = list(client.list_messages(99, mailbox_id=1))
+
+        assert [m.id for m in msgs] == [100, 101]
+        assert session.request.call_count == 2
+        assert session.request.call_args_list[1].kwargs["params"]["cursor"] == "C1"
+
+
+class TestGetMessage:
+    def _raw_response(self, body: bytes) -> Mock:
+        resp = Mock(spec=requests.Response)
+        resp.status_code = 200
+        resp.content = body
+        resp.json.side_effect = ValueError("not json")
+        resp.text = ""
+        return resp
+
+    def test_returns_message_body(self) -> None:
+        session = Mock(spec=requests.Session)
+        session.request.return_value = self._raw_response(
+            (FIXTURES_DIR / "mail" / "plain.eml").read_bytes()
+        )
+        client = make_client(session)
+
+        body = client.get_message(99, mailbox_id=1, msg_id=42)
+
+        assert body.id == 42
+        assert body.mailbox_id == 1
+        assert body.from_ == "alice@example.com"
+        assert body.subject == "Quick question"
+        assert "/1/mail_hostings/99/mailboxes/1/messages/42" in session.request.call_args.args[1]
+
+    def test_404_raises_kdrive_error(self) -> None:
+        session = Mock(spec=requests.Session)
+        err_resp = Mock(spec=requests.Response)
+        err_resp.status_code = 404
+        err_resp.json.return_value = {
+            "error": {"code": "not_found", "description": "Message not found"}
+        }
+        err_resp.text = ""
+        session.request.return_value = err_resp
+        client = make_client(session)
+
+        with pytest.raises(KDriveError, match="not_found"):
+            client.get_message(99, mailbox_id=1, msg_id=42)

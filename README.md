@@ -17,7 +17,7 @@
 - **Scriptable** — every command works non-interactively. Machine-parseable JSON output. Stable exit codes.
 - **AWS-style** — `ik <service> <action> <resource>`, `--output json`, profiles in `~/.config/ik/config.json`. Anyone who has used `aws` is productive in minutes.
 - **Thin and honest** — a well-typed wrapper over the Infomaniak REST API. It does not invent abstractions the API does not provide, and it does not silently retry or coalesce operations.
-- **Multi-service** — kDrive today (browse, search, upload, download, share, trash, activity), VPS Cloud (list, info), Mail / kSuite (list, info). More services on the roadmap.
+- **Multi-service** — kDrive today (browse, search, upload, download, share, trash, activity), VPS Cloud (list, info), Mail / kSuite (list mailboxes, list messages, read messages + attachments). More services on the roadmap.
 - **Single runtime dependency** — only `requests`. No transitive surprises.
 
 ---
@@ -281,13 +281,33 @@ ik mail <subcommand> [args]
 
 | Subcommand    | Description                       |
 | ------------- | --------------------------------- |
-| `ls`          | List current kSuite service       |
+| `ls`          | List kSuite service containers    |
 | `info <id>`   | Show details for one kSuite       |
+| `mailboxes [kSuite_id]` | List mailbox folders inside the mail hosting |
+| `messages <mailbox_id>` | List messages in a mailbox (metadata) |
+| `message <mailbox_id> <msg_id>` | Read a single message (headers, body, attachments) |
 
-This is a thin read-only slice: it shows the kSuite service container
-that sits behind your Infomaniak mail subscription. Mailbox-level and
-message-level commands (read mail, attachments, etc.) are follow-up
-slices.
+Read-only: list mailboxes, list message metadata, read a full message
+with body and attachments. Sending mail and folder management are
+follow-up slices.
+
+The mailbox/message commands need a mail hosting ID — the kSuite ID
+isn't enough. Get it from `ik mail info <kSuite_id>` (the `Mail hosting`
+field), or set a per-profile default:
+
+```bash
+ik configure --default-mail 5678
+ik mail mailboxes
+ik mail messages 1
+ik mail message 1 12345
+ik mail message 1 12345 --html
+ik mail message 1 12345 --raw | less
+ik mail message 1 12345 --save-attachment 1 --local ./design.png
+```
+
+`--save-attachment N` decodes and writes attachment N (1-based) to
+`--local <path>`. The token needs the `mail` scope enabled at
+<https://manager.infomaniak.com/v3/ng/accounts/token/list>.
 
 Example:
 
@@ -295,6 +315,24 @@ Example:
 $ ik mail ls
       ID  PACK                STATUS      FREE  RENEWAL     TRIAL EXPIRES
     1234  kSuite Standard     active      No    enabled     2027-01-15
+
+$ ik mail mailboxes
+      ID  NAME            PARENT    UNREAD  MESSAGES
+        1  INBOX           -              3       42
+        2  Sent            -              0       18
+        3  Drafts          -              0        1
+
+$ ik mail message 1 12345
+From:    alice@example.com
+To:      me@example.com
+Subject: Re: Q3 plan
+Date:    2026-06-12T09:14:23
+
+Sounds good — let's ship it.
+
+Attachments (2):
+  1. design-mock.png  (image/png, 124K)
+  2. spec.pdf         (application/pdf, 88K)
 ```
 
 ---
@@ -386,7 +424,7 @@ API conventions:
 - **v0.1 — Alpha** *(shipped)* — kDrive read/write surface, interactive `configure`, Python 3.10+, single dependency.
 - **v0.2 — Usability** — `--output json|text` everywhere, `--quiet`/`--yes`, progress bars, resumable uploads.
 - **v0.3 — Operations** — **configuration profiles** *(shipped)*, `ik drive sync local remote` (one-way mirror), trash management, usage reports.
-- **v0.4 — Beyond kDrive** — **VPS Cloud commands** *(shipped: `ls`, `info`)*, **Mail (kSuite) commands** *(shipped: `ls`, `info`, thin slice)*, Hosting, Domains.
+- **v0.4 — Beyond kDrive** — **VPS Cloud commands** *(shipped: `ls`, `info`)*, **Mail (kSuite) commands** *(shipped: `ls`, `info`, `mailboxes`, `messages`, `message`)*, Hosting, Domains.
 - **v1.0 — Stable** — frozen API, tab completion, docs site, distribution wheels for PyPI / Homebrew / Linux packages.
 
 The full roadmap, including deferred items, is in [`docs/PRD.md`](./docs/PRD.md).

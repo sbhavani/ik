@@ -1,0 +1,27 @@
+From: alice@example.com
+To: bob@example.com
+Subject: Quarterly report
+Date: Wed, 17 Jun 2026 10:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="MIXED"
+
+--MIXED
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Bob,
+
+Please find the quarterly report attached.
+
+Cheers,
+Alice
+
+--MIXED
+Content-Type: application/pdf; name="report.pdf"
+Content-Disposition: attachment; filename="report.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJeLjz9MKMyAwIG9iago8PCAvVHlwZSAvUGFnZSAvUGFyZW50IDEgMCBSID4+
+ZW5kb2JqCg==
+
+--MIXED--
