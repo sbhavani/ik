@@ -124,20 +124,23 @@ def _write_profile(
     account_id: int | None,
     *,
     default_drive: int | None = None,
+    default_mail: int | None = None,
     set_default_if_first: bool = True,
 ) -> dict:
     """Return a NEW config dict with `profile` added/updated.
 
     Pure function. If `set_default_if_first` and config has no
     'default' key after the update, set it to `profile`. The
-    'default_drive' field is only written when non-None, so profiles
-    that don't set one stay clean.
+    'default_drive' / 'default_mail' fields are only written when
+    non-None, so profiles that don't set them stay clean.
     """
     new = {k: v for k, v in config.items() if k != "profiles"}
     profiles = dict(config.get("profiles") or {})
     entry: dict = {"token": token, "account_id": account_id}
     if default_drive is not None:
         entry["default_drive"] = default_drive
+    if default_mail is not None:
+        entry["default_mail"] = default_mail
     profiles[profile] = entry
     new["profiles"] = profiles
     if set_default_if_first and "default" not in new:
@@ -254,6 +257,10 @@ def cmd_configure(args: argparse.Namespace) -> None:
         _cmd_configure_set_default_drive(args)
         return
 
+    if getattr(args, "default_mail", None) is not None:
+        _cmd_configure_set_default_mail(args)
+        return
+
     profile_name: str
     explicit = getattr(args, "profile", None)
     if explicit:
@@ -339,6 +346,52 @@ def _cmd_configure_set_default_drive(args: argparse.Namespace) -> None:
     print(f"Default drive set to {drive_id} for profile '{profile}'.")
 
 
+def _cmd_configure_set_default_mail(args: argparse.Namespace) -> None:
+    """Set default_mail on the active profile after validating the hosting exists."""
+    explicit = getattr(args, "profile", None)
+    if explicit:
+        _validate_profile_name(explicit)
+        config = _read_config()
+        if explicit not in (config.get("profiles") or {}):
+            sys.exit(
+                f"Error: Profile '{explicit}' not found. "
+                f"Run `ik configure --profile {explicit}` to create it first."
+            )
+        profile = explicit
+    else:
+        config = _read_config()
+        try:
+            profile = _resolve_default_profile(config)
+        except _NoDefaultProfile:
+            sys.exit(
+                "Error: No configured profile. Run `ik configure` first, or pass --profile <name>."
+            )
+
+    mail_hosting_id: int = args.default_mail
+    entry = config["profiles"][profile]
+    token = entry.get("token")
+    if not token:
+        sys.exit(
+            f"Error: Profile '{profile}' has no token. Run `ik configure --profile {profile}` first."
+        )
+
+    client = KDriveClient(token)
+    try:
+        client.list_mailboxes(mail_hosting_id)
+    except KDriveError as e:
+        sys.exit(f"Error: Mail hosting {mail_hosting_id} not reachable on this account: {e}")
+
+    config = _write_profile(
+        config,
+        profile,
+        token,
+        entry.get("account_id"),
+        default_mail=mail_hosting_id,
+    )
+    _write_config(config, CONFIG_PATH)
+    print(f"Default mail hosting set to {mail_hosting_id} for profile '{profile}'.")
+
+
 _COMPLETION_FILES = {
     "bash": "ik.bash",
     "zsh": "ik.zsh",
@@ -406,6 +459,13 @@ def main() -> None:
         default=None,
         metavar="ID",
         help="Set the default kDrive ID for the active profile",
+    )
+    configure_p.add_argument(
+        "--default-mail",
+        type=int,
+        default=None,
+        metavar="ID",
+        help="Set the default mail hosting ID for the active profile",
     )
 
     # whoami

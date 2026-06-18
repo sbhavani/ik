@@ -19,6 +19,7 @@ from ik.cli import (
     _NoDefaultProfile,
     _cmd_configure_list,
     _cmd_configure_set_default_drive,
+    _cmd_configure_set_default_mail,
     _migrate_v1_to_v3,
     _read_config,
     _resolve_account_id,
@@ -898,6 +899,97 @@ class TestCmdConfigureSetDefaultDrive:
 
         with pytest.raises(SystemExit) as exc_info:
             _cmd_configure_set_default_drive(ns(default_drive=20))
+
+        monkeypatch.undo()
+        assert "No configured profile" in str(exc_info.value)
+
+
+# ── _cmd_configure_set_default_mail ───────────────────────────────────
+
+
+class TestCmdConfigureSetDefaultMail:
+    def test_sets_mail_after_validating_against_list_mailboxes(
+        self, tmp_path, capsys: pytest.CaptureFixture
+    ) -> None:
+        import ik.cli
+
+        config = {
+            "default": "work",
+            "profiles": {"work": {"token": "t", "account_id": 1}},
+        }
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(config))
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(ik.cli, "CONFIG_PATH", str(config_path))
+
+        client = Mock(spec=KDriveClient)
+        client.list_mailboxes.return_value = [Mock(id=1, name="INBOX")]
+        with patch("ik.cli.KDriveClient", return_value=client):
+            _cmd_configure_set_default_mail(ns(default_mail=5678))
+
+        monkeypatch.undo()
+        on_disk = json.loads(config_path.read_text())
+        assert on_disk["profiles"]["work"]["default_mail"] == 5678
+        assert "Default mail hosting set to 5678 for profile 'work'." in capsys.readouterr().out
+
+    def test_invalid_mail_hosting_id_exits(self, tmp_path) -> None:
+        import ik.cli
+        from ik import KDriveError
+
+        config = {
+            "default": "work",
+            "profiles": {"work": {"token": "t", "account_id": 1}},
+        }
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(config))
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(ik.cli, "CONFIG_PATH", str(config_path))
+
+        client = Mock(spec=KDriveClient)
+        client.list_mailboxes.side_effect = KDriveError("not_found", "hosting 999 missing")
+        with patch("ik.cli.KDriveClient", return_value=client):
+            with pytest.raises(SystemExit) as exc_info:
+                _cmd_configure_set_default_mail(ns(default_mail=999))
+
+        monkeypatch.undo()
+        assert "999 not reachable" in str(exc_info.value)
+        on_disk = json.loads(config_path.read_text())
+        assert "default_mail" not in on_disk["profiles"]["work"]
+
+    def test_uses_explicit_profile_when_set(self, tmp_path) -> None:
+        import ik.cli
+
+        config = {
+            "default": "work",
+            "profiles": {
+                "work": {"token": "wt", "account_id": 1},
+                "personal": {"token": "pt", "account_id": 2},
+            },
+        }
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(config))
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(ik.cli, "CONFIG_PATH", str(config_path))
+
+        client = Mock(spec=KDriveClient)
+        client.list_mailboxes.return_value = []
+        with patch("ik.cli.KDriveClient", return_value=client):
+            _cmd_configure_set_default_mail(ns(default_mail=5678, profile="personal"))
+
+        monkeypatch.undo()
+        on_disk = json.loads(config_path.read_text())
+        assert "default_mail" not in on_disk["profiles"]["work"]
+        assert on_disk["profiles"]["personal"]["default_mail"] == 5678
+
+    def test_no_config_exits(self, tmp_path) -> None:
+        import ik.cli
+
+        config_path = tmp_path / "config.json"
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(ik.cli, "CONFIG_PATH", str(config_path))
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_configure_set_default_mail(ns(default_mail=5678))
 
         monkeypatch.undo()
         assert "No configured profile" in str(exc_info.value)
