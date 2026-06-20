@@ -28,8 +28,10 @@ from ik.cli import (
     _validate_profile_name,
     _write_config,
     _write_profile,
+    cmd_completion,
     cmd_drives,
     cmd_whoami,
+    main,
 )
 
 
@@ -77,6 +79,45 @@ class TestResolveToken:
 
         with pytest.raises(SystemExit, match="No API token"):
             _resolve_token(ns(token=None), profile=None)
+
+    def test_profile_not_found_lists_existing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        config = tmp_path / "config.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "default": "work",
+                    "profiles": {
+                        "work": {"token": "wt", "account_id": 1},
+                        "personal": {"token": "pt", "account_id": 2},
+                    },
+                }
+            )
+        )
+        monkeypatch.delenv("INFOMANIAK_TOKEN", raising=False)
+        monkeypatch.setattr("ik.cli.CONFIG_PATH", str(config))
+
+        with pytest.raises(SystemExit) as exc_info:
+            _resolve_token(ns(token=None), profile="ghost")
+
+        msg = str(exc_info.value)
+        assert "ghost" in msg
+        assert "personal" in msg
+        assert "work" in msg
+
+    def test_profile_not_found_no_other_profiles(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        config = tmp_path / "config.json"
+        # No profiles at all -> the profile-not-found branch falls through
+        # to the bare "No API token" error path.
+        config.write_text(json.dumps({"profiles": {}}))
+        monkeypatch.delenv("INFOMANIAK_TOKEN", raising=False)
+        monkeypatch.setattr("ik.cli.CONFIG_PATH", str(config))
+
+        with pytest.raises(SystemExit, match="No API token"):
+            _resolve_token(ns(token=None), profile="ghost")
 
 
 # ── _resolve_account_id ───────────────────────────────────────────────
@@ -1011,3 +1052,128 @@ class TestCmdConfigureSetDefaultMail:
 
         monkeypatch.undo()
         assert "no token" in str(exc_info.value)
+
+
+# ── cmd_completion ─────────────────────────────────────────────────────
+
+
+class TestCmdCompletion:
+    def test_invalid_shell_exits(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_completion(ns(shell="powershell"))
+
+        assert "No completion script" in str(exc_info.value)
+        assert "powershell" in str(exc_info.value)
+
+    def test_valid_shell_writes_script(self, capsys: pytest.CaptureFixture) -> None:
+        cmd_completion(ns(shell="bash"))
+
+        out = capsys.readouterr().out
+        assert "_ik" in out  # the bash completion function name
+
+
+# ── main() dispatch error wrapping ────────────────────────────────────
+
+
+class TestMainDispatchErrors:
+    def test_explicit_profile_not_found_with_existing_profiles(self, tmp_path) -> None:
+        import sys
+        from unittest.mock import patch
+
+        config = tmp_path / "config.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "default": "work",
+                    "profiles": {
+                        "work": {"token": "wt", "account_id": 1},
+                        "personal": {"token": "pt", "account_id": 2},
+                    },
+                }
+            )
+        )
+
+        with patch.object(sys, "argv", ["ik", "--profile", "ghost", "drives"]):
+            with patch("ik.cli.CONFIG_PATH", str(config)):
+                with patch("ik.cli._resolve_token", return_value="t"):
+                    with pytest.raises(SystemExit) as exc_info:
+                        main()
+
+        msg = str(exc_info.value)
+        assert "ghost" in msg
+        assert "personal" in msg
+
+    def test_explicit_profile_not_found_no_other_profiles(self, tmp_path) -> None:
+        import sys
+        from unittest.mock import patch
+
+        config = tmp_path / "config.json"
+        config.write_text(json.dumps({"profiles": {"work": {"token": "wt"}}}))
+
+        with patch.object(sys, "argv", ["ik", "--profile", "ghost", "drives"]):
+            with patch("ik.cli.CONFIG_PATH", str(config)):
+                with patch("ik.cli._resolve_token", return_value="t"):
+                    with pytest.raises(SystemExit) as exc_info:
+                        main()
+
+        msg = str(exc_info.value)
+        assert "ghost" in msg
+
+    def test_drive_kdrive_error_wrapped(self) -> None:
+        import sys
+        from unittest.mock import patch
+
+        from ik import Drive, KDriveError
+
+        # Single drive so _get_default_drive returns immediately without
+        # prompting for a selection.
+        single_drive = Drive(
+            id=1,
+            name="Personal",
+            size=100,
+            used_size=10,
+            is_locked=False,
+            has_operation_in_progress=False,
+            created_at=None,
+        )
+
+        with patch.object(sys, "argv", ["ik", "drive", "ls"]):
+            with patch("ik.cli._resolve_token", return_value="t"):
+                with patch("ik.cli.KDriveClient") as KC:
+                    KC.return_value.list_drives.return_value = [single_drive]
+                    KC.return_value.list_files.side_effect = KDriveError("boom", "something broke")
+                    with pytest.raises(SystemExit) as exc_info:
+                        main()
+
+        assert "something broke" in str(exc_info.value)
+        assert "Error:" in str(exc_info.value)
+
+    def test_vps_kdrive_error_wrapped(self) -> None:
+        import sys
+        from unittest.mock import patch
+
+        from ik import KDriveError
+
+        with patch.object(sys, "argv", ["ik", "vps", "ls"]):
+            with patch("ik.cli._resolve_token", return_value="t"):
+                with patch("ik.cli.KDriveClient") as KC:
+                    KC.return_value.list_public_clouds.side_effect = KDriveError("boom", "vps down")
+                    with pytest.raises(SystemExit) as exc_info:
+                        main()
+
+        assert "vps down" in str(exc_info.value)
+
+    def test_mail_kdrive_error_wrapped(self) -> None:
+        import sys
+        from unittest.mock import patch
+
+        from ik import KDriveError
+
+        with patch.object(sys, "argv", ["ik", "mail", "ls"]):
+            with patch("ik.cli._resolve_token", return_value="t"):
+                with patch("ik.cli.KDriveClient") as KC:
+                    KC.return_value.list_my_ksuites.side_effect = KDriveError("boom", "mail denied")
+                    with pytest.raises(SystemExit) as exc_info:
+                        main()
+
+        assert "mail denied" in str(exc_info.value)

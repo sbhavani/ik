@@ -619,3 +619,51 @@ class TestCmdMailMessage:
         assert parsed["from"] == "alice@example.com"
         assert parsed["subject"] == "Quick question"
         assert parsed["attachments"] == []
+
+
+# ── _format_size branches ──────────────────────────────────────────────
+
+
+class TestFormatSize:
+    def test_bytes(self) -> None:
+        from ik.mail import _format_size
+
+        assert _format_size(0) == "0B"
+        assert _format_size(512) == "512B"
+        assert _format_size(1023) == "1023B"
+
+    def test_kilobytes(self) -> None:
+        from ik.mail import _format_size
+
+        assert _format_size(1024) == "1.0K"
+        assert _format_size(1536) == "1.5K"
+        assert _format_size(1024 * 1024 - 1) == "1024.0K"
+
+    def test_megabytes(self) -> None:
+        from ik.mail import _format_size
+
+        assert _format_size(1024**2) == "1.0M"
+        assert _format_size(int(2.5 * 1024**2)) == "2.5M"
+
+    def test_gigabytes(self) -> None:
+        from ik.mail import _format_size
+
+        assert _format_size(1024**3) == "1.0G"
+        assert _format_size(3 * 1024**3) == "3.0G"
+
+
+# ── _save_attachment error paths ──────────────────────────────────────
+
+
+class TestSaveAttachmentErrors:
+    def test_attachment_not_found_in_mime_exits(self, tmp_path) -> None:
+        body = _load_body("with_attachment.eml")
+        body.attachments[0].filename = "missing-from-mime.pdf"
+
+        with pytest.raises(SystemExit) as exc_info:
+            from ik.mail import _save_attachment
+
+            _save_attachment(body, 1, str(tmp_path / "x"), io.StringIO())
+
+        assert "missing-from-mime.pdf" in str(exc_info.value)
+        assert "not found" in str(exc_info.value)

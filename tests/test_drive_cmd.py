@@ -10,7 +10,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from ik import Activity, Drive, File, KDriveClient, KDriveError, ShareLink, SharedFile
+from ik import Activity, Drive, File, KDriveClient, KDriveError, ShareLink, SharedFile, _UNSET
 from ik.driver import (
     _get_default_drive,
     _make_progress,
@@ -1302,6 +1302,41 @@ class TestCmdShare:
         assert payload == [
             {"id": 10, "name": "a.pdf", "update_at": "2024-01-01T00:00:00", "users": 3}
         ]
+
+    def test_update_json_output(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.update_share_link.return_value = self._link(url="https://kdrive.example/s/xyz")
+        out = io.StringIO()
+
+        cmd_share_update(
+            ns(
+                drive=1,
+                file="123",
+                right="public",
+                password=None,
+                valid_until=_UNSET,
+                can_download=None,
+                can_edit=None,
+                can_see_info=None,
+                can_comment=None,
+                can_request_access=None,
+                can_see_stats=None,
+                output="json",
+            ),
+            client,
+            out=out,
+        )
+
+        assert json.loads(out.getvalue()) == {"url": "https://kdrive.example/s/xyz"}
+
+    def test_remove_json_output(self) -> None:
+        client = Mock(spec=KDriveClient)
+        client.delete_share_link.return_value = None
+        out = io.StringIO()
+
+        cmd_share_remove(ns(drive=1, file="report.pdf", output="json"), client, out=out)
+
+        assert json.loads(out.getvalue()) == {"removed": "report.pdf"}
 
 
 # ── cmd_trash ──────────────────────────────────────────────────────────
