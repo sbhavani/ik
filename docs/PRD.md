@@ -13,7 +13,7 @@
 
 The first supported service is **kDrive** (Infomaniak's cloud storage product). The long-term goal is to make `ik` the canonical way to drive every Infomaniak service — hosting, mail, domains, kSuite — from a terminal, in scripts, and in CI.
 
-The tool is distributed as a single Python package (`pip install ik`) and targets Python 3.10+.
+The tool is distributed as a single Python package (`pip install ik`) and targets Python 3.12+.
 
 ---
 
@@ -165,9 +165,9 @@ These are the jobs the CLI is being built to do. Stories marked **[shipped]** ar
 
 **NFR-3. Testability.** All API client methods are unit-testable with a mocked `requests.Session`. The CLI is structured so commands can be invoked with an injected client.
 
-**NFR-4. Type hygiene.** Python 3.10+ syntax (`X | None`, generics in `collections.abc`). `from __future__ import annotations` is used.
+**NFR-4. Type hygiene.** Python 3.12+ syntax (`X | None`, generics in `collections.abc`). `from __future__ import annotations` is used.
 
-**NFR-5. Portability.** Must work on macOS, Linux, and Windows (anywhere Python 3.10+ runs).
+**NFR-5. Portability.** Must work on macOS, Linux, and Windows (anywhere Python 3.12+ runs).
 
 **NFR-6. Logging.** Default is quiet. A `--verbose` flag (planned) raises verbosity to include request/response details for debugging.
 
@@ -208,7 +208,7 @@ This layering means adding a new service (e.g. mail) is a new module under `src/
 ### v0.1 — Alpha (current)
 - kDrive read/write surface (shipped)
 - Interactive configure
-- Python 3.10+, single dependency
+- Python 3.12+, single dependency
 - MIT license
 
 ### v0.2 — Usability

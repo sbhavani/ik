@@ -4,7 +4,7 @@
 > Drive kDrive, VPS Cloud, Mail (kSuite), and more — from your terminal, in scripts, in CI.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-orange.svg)](https://github.com/sbhavani/ik/releases)
 [![Tests](https://img.shields.io/github/actions/workflow/status/sbhavani/ik/ci.yml?branch=master&label=tests)](https://github.com/sbhavani/ik/actions/workflows/ci.yml)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
@@ -43,7 +43,7 @@
 
 ## Install
 
-`ik` is a single Python package, distributed on [PyPI](https://pypi.org/). It targets Python 3.10+.
+`ik` is a single Python package, distributed on [PyPI](https://pypi.org/). It targets Python 3.12+.
 
 **Recommended — [`uv`](https://github.com/astral-sh/uv):**
 ```bash
@@ -421,7 +421,7 @@ API conventions:
 
 ## Roadmap
 
-- **v0.1 — Alpha** *(shipped)* — kDrive read/write surface, interactive `configure`, Python 3.10+, single dependency.
+- **v0.1 — Alpha** *(shipped)* — kDrive read/write surface, interactive `configure`, Python 3.12+, single dependency.
 - **v0.2 — Usability** — `--output json|text` everywhere, `--quiet`/`--yes`, progress bars, resumable uploads.
 - **v0.3 — Operations** — **configuration profiles** *(shipped)*, `ik drive sync local remote` (one-way mirror), trash management, usage reports.
 - **v0.4 — Beyond kDrive** — **VPS Cloud commands** *(shipped: `ls`, `info`)*, **Mail (kSuite) commands** *(shipped: `ls`, `info`, `mailboxes`, `messages`, `message`)*, Hosting, Domains.

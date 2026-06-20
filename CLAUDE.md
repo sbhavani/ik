@@ -50,7 +50,7 @@ with 5000+ files in a directory saw truncated results.
 
 ## Code style
 
-- Python 3.10+ syntax: `int | None`, `list[str]`, generics in `collections.abc`.
+- Python 3.12+ syntax: `int | None`, `list[str]`, generics in `collections.abc`.
 - `from __future__ import annotations` at the top of every module.
 - Type hints on every public function and method. `Any` only at the API boundary if unavoidable — comment why.
 - Dataclasses for value objects (`Drive`, `File`). Don't introduce Pydantic or attrs without discussion.
