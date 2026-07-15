@@ -1,9 +1,4 @@
-"""Tests for src/ik/cli.py — token/account resolution and top-level commands.
-
-The interactive path of `cmd_configure` is untested (it uses `input()`); the
-interesting logic lives in pure helpers `_read_config`, `_write_config`,
-`_write_profile`, and `_resolve_default_profile`, which are all unit-tested.
-"""
+"""Tests for src/ik/cli.py — token/account resolution and top-level commands."""
 
 from __future__ import annotations
 
@@ -14,7 +9,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from ik import KDriveClient
+from ik import KDriveClient, KDriveError
 from ik.cli import (
     _NoDefaultProfile,
     _cmd_configure_list,
@@ -29,6 +24,7 @@ from ik.cli import (
     _write_config,
     _write_profile,
     cmd_completion,
+    cmd_configure,
     cmd_drives,
     cmd_whoami,
     main,
@@ -791,8 +787,10 @@ class TestCmdConfigureList:
         }
         _cmd_configure_list(config, output_format="text")
         out = capsys.readouterr().out
-        # ghost is the default but not in profiles — list still renders existing ones
+        # existing profiles render, and the missing default is flagged
         assert "work" in out
+        assert "! ghost" in out
+        assert "(missing)" in out
 
     def test_json_output(self, capsys: pytest.CaptureFixture) -> None:
         config = {
@@ -808,6 +806,46 @@ class TestCmdConfigureList:
         _cmd_configure_list({}, output_format="json")
         out = capsys.readouterr().out
         assert json.loads(out) == {}
+
+
+# ── cmd_configure (interactive) ───────────────────────────────────────
+
+
+class TestCmdConfigureInteractive:
+    def test_saves_token_and_account_id(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        config = tmp_path / "config.json"
+        monkeypatch.setattr("ik.cli.CONFIG_PATH", str(config))
+        monkeypatch.setattr("builtins.input", lambda _: "  new-token  ")
+        client = Mock(spec=KDriveClient)
+        client.account_id = 42
+        with patch("ik.cli.KDriveClient", return_value=client) as ctor:
+            cmd_configure(ns(profile="work", list=False, default_drive=None, default_mail=None))
+
+        ctor.assert_called_once_with("new-token")
+        saved = json.loads(config.read_text())
+        assert saved["profiles"]["work"]["token"] == "new-token"
+        assert saved["profiles"]["work"]["account_id"] == 42
+
+    def test_empty_token_exits(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        monkeypatch.setattr("ik.cli.CONFIG_PATH", str(tmp_path / "config.json"))
+        monkeypatch.setattr("builtins.input", lambda _: "   ")
+        with pytest.raises(SystemExit, match="Token required"):
+            cmd_configure(ns(profile="work", list=False, default_drive=None, default_mail=None))
+
+    def test_auth_failure_exits_after_saving_token(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        config = tmp_path / "config.json"
+        monkeypatch.setattr("ik.cli.CONFIG_PATH", str(config))
+        monkeypatch.setattr("builtins.input", lambda _: "bad-token")
+        with patch("ik.cli.KDriveClient", side_effect=KDriveError("unauthorized: bad token")):
+            with pytest.raises(SystemExit, match="unauthorized"):
+                cmd_configure(ns(profile="work", list=False, default_drive=None, default_mail=None))
+
+        # token is persisted before the auth probe; account_id stays unset
+        saved = json.loads(config.read_text())
+        assert saved["profiles"]["work"]["token"] == "bad-token"
+        assert saved["profiles"]["work"].get("account_id") is None
 
 
 # ── _cmd_configure_set_default_drive ──────────────────────────────────

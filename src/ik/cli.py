@@ -234,17 +234,17 @@ def _cmd_configure_list(config: dict, output_format: str = "text") -> None:
         return
 
     default = config.get("default")
+    missing_default = default is not None and default not in profiles
     name_width = max(len(n) for n in profiles)
+    if missing_default:
+        name_width = max(name_width, len(default))
     for name in sorted(profiles):
-        marker = "*" if name == default else ("!" if default and name == default else " ")
+        marker = "*" if name == default else " "
         prof = profiles[name]
         account_id = prof.get("account_id")
-        suffix = ""
-        if default and name not in profiles:
-            suffix = "  (missing)"
-        print(
-            f"{marker} {name:<{name_width}}  {account_id if account_id is not None else ''}{suffix}"
-        )
+        print(f"{marker} {name:<{name_width}}  {account_id if account_id is not None else ''}")
+    if missing_default:
+        print(f"! {default:<{name_width}}  (missing)")
 
 
 def cmd_configure(args: argparse.Namespace) -> None:
